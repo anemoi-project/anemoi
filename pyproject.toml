@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evg"
+version = "0.0.1"
+description = "Efficient Visual Generation inference engine"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "EVG Project" }]
+dependencies = []
+
+[project.optional-dependencies]
+runtime = [
+  "accelerate>=1.0",
+  "diffusers>=0.35.0",
+  "huggingface_hub>=0.25",
+  "imageio-ffmpeg>=0.5",
+  "pillow>=10",
+  "safetensors>=0.4",
+  "torch>=2.4",
+  "transformers>=4.50",
+]
+kernels = [
+  "triton>=3.0; platform_system == 'Linux'",
+]
+server = [
+  "fastapi>=0.115",
+  "pydantic>=2.8",
+  "uvicorn[standard]>=0.30",
+]
+dev = [
+  "mypy>=1.11",
+  "pytest>=8.0",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+evg = "evg.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["evg*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

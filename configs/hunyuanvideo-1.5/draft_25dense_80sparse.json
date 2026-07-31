@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "dense_step_fraction": 0.25,
+  "default_sparsity": 0.8,
+  "rules": []
+}

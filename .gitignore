@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.so
+*.dylib
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+build/
+dist/
+outputs/
+checkpoints/
+*.mp4
+*.safetensors
+*.ckpt
