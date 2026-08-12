@@ -10,8 +10,8 @@ import sysconfig
 
 
 _MODULES = {
-    "router": "mpa._cuda_router",
-    "attention": "mpa._cuda_attention",
+    "router": "evg.layers.attention.mpa._cuda_router",
+    "attention": "evg.layers.attention.mpa._cuda_attention",
 }
 
 

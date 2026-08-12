@@ -914,7 +914,7 @@ route_precision_impl(
   TORCH_CHECK(
       (properties->major == 8 && properties->minor == 9) ||
           (properties->major == 12 && properties->minor == 0),
-      "mpa._cuda_router requires SM89 or SM120, found sm_",
+      "evg.layers.attention.mpa._cuda_router requires SM89 or SM120, found sm_",
       properties->major, properties->minor);
 
   const int segment_items = static_cast<int>(segment_items_value);
@@ -1520,7 +1520,7 @@ route_sol_threshold(
   TORCH_CHECK(
       (properties->major == 8 && properties->minor == 9) ||
           (properties->major == 12 && properties->minor == 0),
-      "mpa._cuda_router requires SM89 or SM120, found sm_",
+      "evg.layers.attention.mpa._cuda_router requires SM89 or SM120, found sm_",
       properties->major, properties->minor);
 
   auto int_options = logits_fp16.options().dtype(at::ScalarType::Int);
@@ -1739,7 +1739,7 @@ torch::Tensor validate_route_metadata(
   TORCH_CHECK(
       (properties->major == 8 && properties->minor == 9) ||
           (properties->major == 12 && properties->minor == 0),
-      "mpa._cuda_router requires SM89 or SM120, found sm_",
+      "evg.layers.attention.mpa._cuda_router requires SM89 or SM120, found sm_",
       properties->major, properties->minor);
   auto validation = torch::empty({3}, fp8_counts.options());
   const cudaStream_t stream =

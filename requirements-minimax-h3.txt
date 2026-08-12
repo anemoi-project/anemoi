@@ -4,6 +4,7 @@ torch==2.11.0
 triton==3.6.0
 transformers==5.11.0
 accelerate==1.14.0
+huggingface_hub>=1.0
 safetensors==0.8.0
 av==18.0.0
 numpy==2.3.5

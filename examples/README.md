@@ -1,9 +1,7 @@
 # Examples
 
-Runnable examples will be added after the first executable model path lands.
-
-The first target is:
+The current executable model path is MiniMax-H3:
 
 ```bash
-evg generate --model wan2.2 --variant t2v-a14b --prompt "..." --output outputs/wan22.mp4
+scripts/run_minimax_h3.sh
 ```

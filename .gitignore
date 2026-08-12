@@ -12,6 +12,7 @@ build/
 dist/
 outputs/
 checkpoints/
+/models/
 *.mp4
 *.safetensors
 *.ckpt

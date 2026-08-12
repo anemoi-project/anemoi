@@ -458,7 +458,7 @@ torch::Tensor assemble_video_text_output(
       at::cuda::getDeviceProperties(video_output_bhsd.get_device());
   TORCH_CHECK(
       properties->major == 8 && properties->minor == 9,
-      "mpa._cuda_attention output assembly requires compute capability 8.9, found sm_",
+      "evg.layers.attention.mpa._cuda_attention output assembly requires compute capability 8.9, found sm_",
       properties->major, properties->minor);
 
   auto output = torch::empty(
@@ -557,7 +557,7 @@ torch::Tensor assemble_fused_visual_text_output(
       at::cuda::getDeviceProperties(visual_output_bhsd.get_device());
   TORCH_CHECK(
       properties->major == 8 && properties->minor == 9,
-      "mpa._cuda_attention fused output assembly requires compute capability 8.9, found sm_",
+      "evg.layers.attention.mpa._cuda_attention fused output assembly requires compute capability 8.9, found sm_",
       properties->major, properties->minor);
 
   auto output = torch::empty(

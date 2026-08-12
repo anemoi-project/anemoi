@@ -10,7 +10,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from mpa._private_h3_layout import _is_exact_h3_packed_qkv
+from evg.layers.attention.mpa._private_h3_layout import _is_exact_h3_packed_qkv
 
 from .native_k64_attention import sm89_regular2d_h3_attention
 from .sm89_mainline import select_sm89_adaptive_2d_plan

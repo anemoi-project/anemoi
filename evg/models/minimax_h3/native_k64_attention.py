@@ -8,13 +8,13 @@ import math
 import torch
 import torch.nn.functional as F
 
-from mpa.backends.sm89_k64 import (
+from evg.layers.attention.mpa.backends.sm89_k64 import (
     assemble_h3_k64_output,
     native_k64_mixed_attention,
     pack_h3_k64_qkv,
     pool_compact_k64_key,
 )
-from mpa.routing import (
+from evg.layers.attention.mpa.routing import (
     compute_draft_probability_tensors,
     route_draft_spatial_cross_precision_tensors,
 )

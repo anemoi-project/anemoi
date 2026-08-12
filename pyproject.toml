@@ -25,6 +25,16 @@ runtime = [
 kernels = [
   "triton>=3.0; platform_system == 'Linux'",
 ]
+minimax-h3 = [
+  "accelerate==1.14.0",
+  "av==18.0.0",
+  "huggingface_hub>=1.0",
+  "numpy==2.3.5",
+  "safetensors==0.8.0",
+  "torch==2.11.0",
+  "transformers==5.11.0",
+  "triton==3.6.0; platform_system == 'Linux'",
+]
 server = [
   "fastapi>=0.115",
   "pydantic>=2.8",
@@ -41,6 +51,9 @@ evg = "evg.cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["evg*"]
+
+[tool.setuptools.package-data]
+"evg.models.minimax_h3" = ["assets/*.pt"]
 
 [tool.ruff]
 line-length = 100

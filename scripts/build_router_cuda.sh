@@ -23,5 +23,4 @@ cd "${repo_root}"
 MPA_BUILD_COMPONENTS=router "${python_bin}" setup.py build_ext \
   --build-temp "${build_root}/router/temp" \
   --build-lib "${build_root}/router/lib" \
-  --inplace \
-  --force
+  --inplace

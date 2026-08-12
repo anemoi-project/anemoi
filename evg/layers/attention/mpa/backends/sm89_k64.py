@@ -13,7 +13,10 @@ from typing import Callable
 
 import torch
 
-from mpa.build_identity import import_native_extension, resolve_mixed_attention_operator
+from evg.layers.attention.mpa.build_identity import (
+    import_native_extension,
+    resolve_mixed_attention_operator,
+)
 
 
 _BLOCK = 64
@@ -80,7 +83,7 @@ def prepare_k64_fp8_operands(
     # Import lazily so the native K64 FP16 path does not depend on Triton.
     # The mixed path owns this minimal quantizer and therefore does not require
     # SpargeAttention's unrelated compiled baseline extensions.
-    from mpa.backends._sm89_qk_quant import quantize_qk_k64
+    from evg.layers.attention.mpa.backends._sm89_qk_quant import quantize_qk_k64
 
     q8, q_scale, k8, k_scale = quantize_qk_k64(
         query_fp16,

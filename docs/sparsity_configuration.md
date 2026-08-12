@@ -62,30 +62,8 @@ For complete control, provide a matrix directly. Its shape must be exactly
 All sparsity values must be in `[0, 1)`. Step and layer selectors are validated
 against the loaded model before diffusion starts.
 
-## HunyuanVideo-1.5
-
-The integration assigns global layer IDs to double-stream blocks first and
-single-stream blocks second. The checked 720p T2V checkpoint has 54 attention
-layers, indexed `0-53`.
-
-The standard schedule is:
-
-```text
-configs/hunyuanvideo-1.5/draft_25dense_80sparse.json
-```
-
-Run a custom schedule with:
-
-```bash
-EVG_DRAFT_SCHEDULE_CONFIG=/path/to/schedule.json \
-  scripts/run_hunyuan15_draft_720p.sh
-```
-
-The legacy `--draft_dense_fraction` and `--draft_sparsity_ratio` options remain
-as a uniform fallback when no JSON schedule is supplied.
-
 ## Precision Scope
 
-The current acceleration pipeline is BF16 Draft Attention with Triton sparse
-attention. FP8/FP4 and mixed-precision policies remain future work and are not
-part of this schedule.
+This configuration object belongs to the generic BF16 Draft Attention backend.
+MiniMax-H3 MPA uses its validated layer budget and FP8/FP16 split directly in
+`evg.models.minimax_h3.runner`; it does not consume this legacy JSON schema.

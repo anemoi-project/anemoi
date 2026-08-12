@@ -25,7 +25,7 @@ WAN_NEGATIVE_PROMPT = (
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a small Diffusers video-generation example.")
-    parser.add_argument("--model", choices=("wan2.2", "hunyuanvideo-1.5"), required=True)
+    parser.add_argument("--model", choices=("wan2.2",), required=True)
     parser.add_argument("--prompt", default=DEFAULT_PROMPT)
     parser.add_argument("--output", required=True)
     parser.add_argument(
@@ -62,10 +62,7 @@ def main() -> int:
     generator = torch.Generator(device="cuda").manual_seed(args.seed)
     started = time.perf_counter()
 
-    if args.model == "wan2.2":
-        frames = run_wan22(args, torch_dtype, generator)
-    else:
-        frames = run_hunyuan15(args, torch_dtype, generator)
+    frames = run_wan22(args, torch_dtype, generator)
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -135,34 +132,6 @@ def run_wan22(args: argparse.Namespace, torch_dtype, generator):
         num_frames=args.num_frames,
         num_inference_steps=args.num_inference_steps,
         guidance_scale=args.guidance_scale,
-        generator=generator,
-        output_type="latent" if args.latent_only else "np",
-    )
-    frames = output.frames[0]
-    cleanup_pipeline(pipe)
-    return frames
-
-
-def run_hunyuan15(args: argparse.Namespace, torch_dtype, generator):
-    from diffusers import HunyuanVideo15Pipeline
-
-    model_id = resolve_model_path(
-        args.model_root,
-        "HunyuanVideo-1.5-Diffusers-480p_t2v",
-        "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v",
-    )
-    pipe = HunyuanVideo15Pipeline.from_pretrained(
-        model_id,
-        torch_dtype=torch_dtype,
-        cache_dir=args.cache_dir,
-    )
-    prepare_pipeline(pipe, args.cpu_offload)
-    output = pipe(
-        prompt=args.prompt,
-        height=args.height,
-        width=args.width,
-        num_frames=args.num_frames,
-        num_inference_steps=args.num_inference_steps,
         generator=generator,
         output_type="latent" if args.latent_only else "np",
     )

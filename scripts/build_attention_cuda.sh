@@ -23,5 +23,4 @@ cd "${repo_root}"
 MPA_BUILD_COMPONENTS=sm89 "${python_bin}" setup.py build_ext \
   --build-temp "${build_root}/attention/temp" \
   --build-lib "${build_root}/attention/lib" \
-  --inplace \
-  --force
+  --inplace

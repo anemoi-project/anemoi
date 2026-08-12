@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one MiniMax-H3 compressed-weight quality candidate on 4x RTX 4090.
+"""Run one MiniMax-H3 compressed-weight quality candidate on SM89 GPUs.
 
 The runner combines SolEngine's pruned-FP8 DiT loader with its lossless
 Ulysses packed-QKV exchange.  Every candidate uses the same checkpoint,
@@ -28,28 +28,29 @@ import sys
 import time
 from typing import Any
 
+from evg.models.minimax_h3.resources import CHECKPOINT_BYTES, CHECKPOINT_SHA256
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SOL_ROOT = ROOT / "integrations/minimax_h3/solengine"
+
+PACKAGE_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_RESOURCE_ROOT = Path(
+    os.environ.get("EVG_MINIMAX_H3_ROOT", REPO_ROOT / "models/minimax-h3")
+)
+DEFAULT_SOL_ROOT = PACKAGE_ROOT / "solengine"
 DEFAULT_DIFFUSERS = Path(
-    os.environ.get("H3_DIFFUSERS_CHECKOUT", ROOT / "external/diffusers")
+    os.environ.get("H3_DIFFUSERS_CHECKOUT", DEFAULT_RESOURCE_ROOT / "diffusers")
 )
 DEFAULT_MODEL_ROOT = Path(
-    os.environ.get("H3_MODEL_ROOT", ROOT / "external/MiniMax-H3-diffusers")
+    os.environ.get("H3_MODEL_ROOT", DEFAULT_RESOURCE_ROOT / "model")
 )
 DEFAULT_CHECKPOINT = Path(
     os.environ.get(
         "H3_DIT_CHECKPOINT",
-        ROOT / "external/minimax_h3_fl2va_pruned_fp8_scaled.safetensors",
+        DEFAULT_RESOURCE_ROOT
+        / "checkpoint/diffusion_models/minimax_h3_fl2va_pruned_fp8_scaled.safetensors",
     )
 )
-DEFAULT_CONDITIONING = (
-    ROOT / "assets/conditioning/official-example-1.pt"
-)
-CHECKPOINT_BYTES = 20_958_205_608
-CHECKPOINT_SHA256 = (
-    "12944c1f7791637e7de12208aef04da82bd26b95271b1b47d817364315ade993"
-)
+DEFAULT_CONDITIONING = PACKAGE_ROOT / "assets/official-example-1.pt"
 PROMPT_SHA256 = (
     "98f36b879692095e099ae824c18d9e93e7006a490e082fd474a5f531769dcf06"
 )
@@ -120,7 +121,10 @@ def _parser() -> argparse.ArgumentParser:
         "--steps",
         type=int,
         default=50,
-        help="50 for the quality workload; 2 is the supported load/memory smoke",
+        help=(
+            "50 for the quality workload; 12 exercises sparse MPA after the "
+            "dense-first interval; 2 checks only load and memory"
+        ),
     )
     parser.add_argument("--no-decode", action="store_true")
     parser.add_argument(
@@ -251,7 +255,7 @@ def _configure_environment(args: argparse.Namespace) -> tuple[Path, Path]:
     if missing:
         raise FileNotFoundError(f"required local sources are missing: {missing}")
 
-    os.environ.setdefault("H3_BENCH_ROOT", str(ROOT))
+    os.environ.setdefault("H3_BENCH_ROOT", str(REPO_ROOT))
     os.environ.setdefault("H3_SOL_ROOT", str(args.sol_root.resolve()))
     os.environ.setdefault("H3_SOL_GB10", str(gb10))
     os.environ.setdefault("H3_DIFFUSERS_SRC", str(args.diffusers_src.resolve() / "src"))
@@ -272,8 +276,7 @@ def _configure_environment(args: argparse.Namespace) -> tuple[Path, Path]:
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 
-    _prepend(ROOT / "python")
-    _prepend(ROOT)
+    _prepend(REPO_ROOT)
     _prepend(args.diffusers_src.resolve() / "src")
     _prepend(args.sol_root.resolve() / "techniques/sparse_backends")
     _prepend(gb10)
@@ -281,8 +284,7 @@ def _configure_environment(args: argparse.Namespace) -> tuple[Path, Path]:
 
 
 def _import_benchmark_support():
-    _prepend(ROOT / "benchmarks")
-    return importlib.import_module("minimax_h3_runtime")
+    return importlib.import_module("evg.models.minimax_h3.runtime")
 
 
 def _warm_sparse_provider(
@@ -347,7 +349,7 @@ def _make_mpa_attention(
     prefix_tokens: int,
     video_shape: tuple[int, int, int],
 ):
-    from integrations.minimax_h3 import H3MPAAttention, H3MPAConfig
+    from evg.models.minimax_h3 import H3MPAAttention, H3MPAConfig
 
     precision = candidate.get(
         "precision", {"fp8": 0.8, "fp16": 0.2}
@@ -432,7 +434,7 @@ def _install_post_ulysses(
         )
         cleanup.append(lambda: sol_attn_h3.uninstall(transformer))
     elif candidate["kind"] == "mpa":
-        from integrations.minimax_h3 import install_layout_observer
+        from evg.models.minimax_h3 import install_layout_observer
 
         attention = _make_mpa_attention(
             candidate,
@@ -528,8 +530,8 @@ def _main_distributed(args: argparse.Namespace, candidate: dict[str, Any]) -> in
     world = int(os.environ.get("WORLD_SIZE", "1"))
     rank = int(os.environ.get("RANK", "0"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    if world != 4:
-        raise RuntimeError(f"this 4090 compressed runner requires torchrun world_size=4, got {world}")
+    if world < 1:
+        raise RuntimeError(f"world_size must be positive, got {world}")
     torch.cuda.set_device(local_rank)
     dist.init_process_group(
         backend="nccl",
@@ -594,10 +596,20 @@ def _main_distributed(args: argparse.Namespace, candidate: dict[str, Any]) -> in
     )
     sequence_tokens = prefix_tokens + math.prod(video_shape)
 
+    transformer_config = json.loads(
+        (args.model_root.resolve() / "transformer/config.json").read_text()
+    )
+    attention_heads = int(transformer_config["num_attention_heads"])
+    if attention_heads % world:
+        raise RuntimeError(
+            f"MiniMax-H3 has {attention_heads} attention heads, which cannot be "
+            f"evenly sharded across world_size={world}"
+        )
+
     bench = _import_benchmark_support()
     _warm_sparse_provider(
         candidate,
-        local_heads=14,
+        local_heads=attention_heads // world,
         prefix_tokens=prefix_tokens,
         sequence_tokens=sequence_tokens,
         video_shape=video_shape,
@@ -609,10 +621,14 @@ def _main_distributed(args: argparse.Namespace, candidate: dict[str, Any]) -> in
     from cp_plan import MINIMAX_H3_CP_PLAN, assert_no_attention_mask
 
     assert_no_attention_mask(transformer)
-    transformer.enable_parallelism(
-        config=ContextParallelConfig(ulysses_degree=4, ulysses_anything=True),
-        cp_plan=MINIMAX_H3_CP_PLAN,
-    )
+    if world > 1:
+        transformer.enable_parallelism(
+            config=ContextParallelConfig(
+                ulysses_degree=world,
+                ulysses_anything=True,
+            ),
+            cp_plan=MINIMAX_H3_CP_PLAN,
+        )
     attention, cleanup = _install_post_ulysses(
         transformer,
         candidate,
@@ -699,7 +715,7 @@ def _main_distributed(args: argparse.Namespace, candidate: dict[str, Any]) -> in
         if not consistent:
             raise RuntimeError("Ulysses ranks produced different gathered latent states")
         results = {
-            "schema": "mpa.benchmark.minimax_h3_fp8_ulysses_sm89.v1",
+            "schema": "evg.benchmark.minimax_h3_fp8_sm89.v2",
             "status": "denoised",
             "candidate": args.candidate,
             "candidate_policy": candidate,
@@ -717,11 +733,12 @@ def _main_distributed(args: argparse.Namespace, candidate: dict[str, Any]) -> in
                 "prefix_tokens": prefix_tokens,
                 "sequence_tokens": sequence_tokens,
                 "video_shape": list(video_shape),
+                "world_size": world,
             },
             "fairness": {
                 "same_pruned_fp8_dit": True,
                 "same_conditioning": True,
-                "same_ulysses_degree": 4,
+                "same_ulysses_degree": world,
                 "same_lossless_stack": [
                     "streamed_weight_only_fp8",
                     "triton_fp8_activation_quantizer",
@@ -745,7 +762,7 @@ def _main_distributed(args: argparse.Namespace, candidate: dict[str, Any]) -> in
                 "conditioning_prompt_sha256": prompt_sha256,
                 "sol_root": str(args.sol_root.resolve()),
                 "diffusers_src": str(args.diffusers_src.resolve()),
-                "mpa_root": str(ROOT),
+                "evg_root": str(REPO_ROOT),
                 **source_provenance,
             },
             "transformer_build": build,
@@ -774,8 +791,8 @@ def _main_distributed(args: argparse.Namespace, candidate: dict[str, Any]) -> in
             {
                 "candidate": args.candidate,
                 "candidate_policy": candidate,
-                "world_size": 4,
-                "ulysses_degree": 4,
+                "world_size": world,
+                "ulysses_degree": world,
                 "decode": not args.no_decode,
                 "prompt_id": args.prompt_id,
                 "prompt_sha256": prompt_sha256,

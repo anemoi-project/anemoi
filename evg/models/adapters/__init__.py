@@ -5,9 +5,9 @@ from evg.models.adapters.base import AdapterError, AdapterRuntimePlan, VideoMode
 from evg.models.adapters.families import (
     BerniniAdapter,
     Cosmos3Adapter,
-    HunyuanVideo15Adapter,
     LingBotVideoAdapter,
     LongCatVideoAdapter,
+    MiniMaxH3Adapter,
     SkyReelsV3Adapter,
     Wan22Adapter,
 )
@@ -15,8 +15,8 @@ from evg.models.specs import ModelSpec
 
 
 ADAPTERS: dict[str, type[VideoModelAdapter]] = {
+    "minimax-h3": MiniMaxH3Adapter,
     "wan2.2": Wan22Adapter,
-    "hunyuanvideo-1.5": HunyuanVideo15Adapter,
     "lingbot-video": LingBotVideoAdapter,
     "longcat-video": LongCatVideoAdapter,
     "cosmos3": Cosmos3Adapter,

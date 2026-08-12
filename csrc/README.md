@@ -1,5 +1,5 @@
 # C++ and CUDA Extensions
 
-Native kernels will live here when EVG moves beyond Python-level adapter
-integration. Draft Attention kernels should enter through this directory once
-the Python backend contract is stable.
+This directory contains the native router and SM89 FP8/FP16 mixed-attention
+kernels used by `evg.layers.attention.mpa`. Build them with
+`scripts/build_router_cuda.sh` and `scripts/build_attention_cuda.sh`.

@@ -55,7 +55,7 @@ def _extensions():
         router = ROOT / "csrc" / "router" / "cuda"
         modules.append(
             CUDAExtension(
-                name="mpa._cuda_router",
+                name="evg.layers.attention.mpa._cuda_router",
                 sources=[
                     str(router / "bindings.cpp"),
                     str(router / "draft_probability.cu"),
@@ -83,7 +83,7 @@ def _extensions():
         common = attention / "common"
         modules.append(
             CUDAExtension(
-                name="mpa._cuda_attention",
+                name="evg.layers.attention.mpa._cuda_attention",
                 sources=[
                     str(sm89 / "bindings.cpp"),
                     str(sm89 / "k64_attention_host.cu"),
@@ -120,7 +120,6 @@ def _extensions():
 
 ext_modules, cmdclass = _extensions()
 setup(
-    package_dir={"": "python"},
     ext_modules=ext_modules,
     cmdclass=cmdclass,
 )

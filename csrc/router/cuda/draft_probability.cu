@@ -1117,7 +1117,7 @@ torch::Tensor draft_logits_impl(
   TORCH_CHECK(
       (properties->major == 8 && properties->minor == 9) ||
           (properties->major == 12 && properties->minor == 0),
-      "mpa._cuda_router requires SM89 or SM120, found sm_",
+      "evg.layers.attention.mpa._cuda_router requires SM89 or SM120, found sm_",
       properties->major, properties->minor);
 
   const int64_t rows = q_pool.size(2);

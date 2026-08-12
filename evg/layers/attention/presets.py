@@ -46,30 +46,6 @@ PRESETS: dict[str, DraftAttentionPreset] = {
         num_heads=40,
         head_dim=128,
     ),
-    "hunyuanvideo-1.5-480p": DraftAttentionPreset(
-        name="hunyuanvideo-1.5-480p",
-        latent_h=32,
-        latent_w=48,
-        num_frames=33,
-        text_len=256,
-        pool_h=8,
-        pool_w=16,
-        sparsity_ratio=0.9,
-        num_heads=24,
-        head_dim=128,
-    ),
-    "hunyuanvideo-1.5-720p": DraftAttentionPreset(
-        name="hunyuanvideo-1.5-720p",
-        latent_h=48,
-        latent_w=80,
-        num_frames=33,
-        text_len=256,
-        pool_h=8,
-        pool_w=16,
-        sparsity_ratio=0.9,
-        num_heads=24,
-        head_dim=128,
-    ),
 }
 
 
