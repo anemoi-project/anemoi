@@ -1,0 +1,9 @@
+# Versions used for the validated 4x4090 runs. The MiniMax-H3 Diffusers
+# checkout is supplied directly to the demo runner.
+torch==2.11.0
+triton==3.6.0
+transformers==5.11.0
+accelerate==1.14.0
+safetensors==0.8.0
+av==18.0.0
+numpy==2.3.5
