@@ -4,23 +4,16 @@ Efficient Visual Generation (EVG) is an inference-only framework for fast visual
 
 ## Installation
 
-Linux, an NVIDIA GPU, and a CUDA toolkit containing `nvcc` are required for
-the native MiniMax-H3 MPA path. We recommend Conda for environment management.
-The setup script creates (or updates) an environment named `evg`, installs the
-pinned MiniMax-H3 runtime dependencies, EVG itself, and the development tools:
+Linux, an NVIDIA GPU, and a CUDA toolkit containing `nvcc` are required for the native MiniMax-H3 MPA path. We recommend Conda for environment management. The setup script creates (or updates) an environment named `evg`, installs the pinned MiniMax-H3 runtime dependencies, EVG itself, and the development tools:
 
 ```bash
 scripts/setup_conda_env.sh
 conda activate evg
 ```
 
-It detects the lowest NVIDIA driver version across the visible GPUs and picks
-a matching CUDA/PyTorch stack. Preview the selection without changing the
-environment with `scripts/setup_conda_env.sh --dry-run`.
+It detects the lowest NVIDIA driver version across the visible GPUs and picks a matching CUDA/PyTorch stack. Preview the selection without changing the environment with `scripts/setup_conda_env.sh --dry-run`.
 
-The script installs Python 3.12 and does not compile the CUDA extensions during
-installation. The MiniMax-H3 launcher builds them for the active PyTorch and
-CUDA installation when the MPA candidate is selected.
+The script installs Python 3.12 and does not compile the CUDA extensions during installation. The MiniMax-H3 launcher builds them for the active PyTorch and CUDA installation when the MPA candidate is selected.
 
 For framework-only development, run the checks after activating the environment:
 
@@ -30,9 +23,7 @@ python -m unittest discover -s tests
 
 ## MiniMax-H3 quick start
 
-After activating the `evg` environment, the launcher downloads only the required
-model components and compressed DiT, builds the native MPA extensions, selects
-a valid number of visible GPUs, and generates the demo video:
+After activating the `evg` environment, the launcher downloads only the required model components and compressed DiT, builds the native MPA extensions, selects a valid number of visible GPUs, and generates the demo video:
 
 ```bash
 scripts/run_minimax_h3.sh
@@ -88,3 +79,6 @@ The remaining model registry and generic Draft Attention implementation are kept
 ## Organization
 - Zhejiang University
 - Nanjing University
+
+## Acknowledgement
+Currently, this repo is mainly contributed by [Rui Ding](https://openreview.net/profile?id=~Rui_Ding15) and [Weize Ma](https://openreview.net/profile?id=~Weize_Ma1) from Nanjing University. The Draft Attention design comes from [Xuan Shen](https://shawnricecake.github.io/) from Zhejiang University.
