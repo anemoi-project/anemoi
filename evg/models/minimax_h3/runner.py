@@ -28,6 +28,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from evg.models.minimax_h3.resources import CHECKPOINT_BYTES, CHECKPOINT_SHA256
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -50,7 +52,7 @@ DEFAULT_CHECKPOINT = Path(
     )
 )
 DEFAULT_CONDITIONING = PACKAGE_ROOT / "assets/official-example-1.pt"
-DEFAULT_MPA_CONFIG = PACKAGE_ROOT / "configs/mpa-sm89-regular2d-mixed.json"
+DEFAULT_MPA_CONFIG = REPO_ROOT / "examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml"
 PROMPT_SHA256 = (
     "98f36b879692095e099ae824c18d9e93e7006a490e082fd474a5f531769dcf06"
 )
@@ -128,7 +130,7 @@ def _parser() -> argparse.ArgumentParser:
         "--mpa-config",
         type=Path,
         default=DEFAULT_MPA_CONFIG,
-        help="JSON file containing the MPA sparsity, precision, and dense schedule",
+        help="YAML file containing the MPA sparsity, precision, and dense schedule",
     )
     parser.add_argument("--height", type=int, default=768)
     parser.add_argument("--width", type=int, default=1344)
@@ -159,13 +161,13 @@ def _parser() -> argparse.ArgumentParser:
 def _read_mpa_config(path: Path) -> dict[str, Any]:
     path = path.resolve()
     try:
-        payload = json.loads(path.read_text())
+        payload = yaml.safe_load(path.read_text())
     except FileNotFoundError:
         raise FileNotFoundError(f"MPA config does not exist: {path}") from None
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid MPA JSON config {path}: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise ValueError(f"invalid MPA YAML config {path}: {exc}") from exc
     if not isinstance(payload, dict):
-        raise TypeError("MPA config must be a JSON object")
+        raise TypeError("MPA config must be a YAML mapping")
     unknown = sorted(set(payload) - _MPA_CONFIG_KEYS)
     if unknown:
         raise ValueError(f"unknown MPA config keys: {unknown}")

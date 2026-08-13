@@ -175,20 +175,29 @@ scripts/run_minimax_h3.sh \
 ## MPA configuration
 
 The released policy is
-[`configs/mpa-sm89-regular2d-mixed.json`](configs/mpa-sm89-regular2d-mixed.json).
+[`examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml`](../../../examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml),
+which the launcher loads by default. Reference it explicitly with:
+
+```bash
+scripts/run_minimax_h3.sh \
+  mpa-sm89-regular2d-mixed \
+  outputs/minimax-h3/mpa \
+  --mpa-config examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml
+```
+
 Copy the file before changing an experiment:
 
 ```bash
-cp evg/models/minimax_h3/configs/mpa-sm89-regular2d-mixed.json \
-  /tmp/my-mpa-config.json
+cp examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml \
+  /tmp/my-mpa-config.yaml
 
 scripts/run_minimax_h3.sh \
   mpa-sm89-regular2d-mixed \
   outputs/minimax-h3/mpa-custom \
-  --mpa-config /tmp/my-mpa-config.json
+  --mpa-config /tmp/my-mpa-config.yaml
 ```
 
-The JSON controls the base and per-layer sparsity, retained-block FP8/FP16
+The YAML controls the base and per-layer sparsity, retained-block FP8/FP16
 split, dense-first steps/layers, and tile selection. Unknown fields and invalid
 ranges are rejected instead of being silently ignored.
 
@@ -211,7 +220,7 @@ path. The resolved policy, including the derived average sparse-layer ratio, is
 available through `--print-config` and is recorded with the run artifacts.
 
 For a precision-only ablation, command-line overrides are also available and
-take precedence over the JSON file.
+take precedence over the YAML file.
 
 The released MPA default is FP8/FP16 = 0.8/0.2. An ablation must provide both
 positive ratios and they must sum to one:

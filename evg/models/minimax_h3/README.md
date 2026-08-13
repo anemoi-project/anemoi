@@ -21,5 +21,16 @@ From the repository root, run:
 scripts/run_minimax_h3.sh
 ```
 
+The launcher loads the annotated policy at
+[`examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml`](../../../examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml)
+by default. To reference a configuration explicitly:
+
+```bash
+scripts/run_minimax_h3.sh \
+  mpa-sm89-regular2d-mixed \
+  outputs/minimax-h3/mpa \
+  --mpa-config examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml
+```
+
 See [REPRODUCTION.md](REPRODUCTION.md) for the pinned resources, manual build,
 multi-GPU selection, smoke test, and output contract.

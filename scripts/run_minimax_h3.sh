@@ -45,13 +45,13 @@ else
 fi
 
 if [[ "${EVG_INSTALL_DEPS:-1}" == "1" ]]; then
-  if ! "${python_bin}" -c 'import accelerate, av, huggingface_hub, safetensors, torch, transformers, triton' >/dev/null 2>&1; then
+  if ! "${python_bin}" -c 'import accelerate, av, huggingface_hub, safetensors, torch, transformers, triton, yaml' >/dev/null 2>&1; then
     "${python_bin}" -m pip install --upgrade pip
     "${python_bin}" -m pip install -r "${repo_root}/requirements-minimax-h3.txt"
   fi
 fi
 
-if ! "${python_bin}" -c 'import huggingface_hub, torch, triton' >/dev/null 2>&1; then
+if ! "${python_bin}" -c 'import huggingface_hub, torch, triton, yaml' >/dev/null 2>&1; then
   echo "MiniMax-H3 dependencies are unavailable; set EVG_INSTALL_DEPS=1 or provide EVG_PYTHON" >&2
   exit 1
 fi

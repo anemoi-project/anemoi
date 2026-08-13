@@ -9,4 +9,5 @@ safetensors==0.8.0
 av==18.0.0
 numpy==2.3.5
 pillow>=10
+PyYAML>=6.0
 requests>=2.32

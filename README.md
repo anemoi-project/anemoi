@@ -59,9 +59,19 @@ scripts/run_minimax_h3.sh mpa-sm89-regular2d-mixed outputs/minimax-h3/mpa
 Dense is the quality baseline; the state-of-the-art method [Sol-Attn](https://github.com/NVlabs/Sana/tree/sol-engine) is introduced as a reference implementation. All three paths use the same checkpoint, conditioning, model fusions, Ulysses degree, seed, scheduler, and decoder.
 
 The released MPA policy is stored in
-[`evg/models/minimax_h3/configs/mpa-sm89-regular2d-mixed.json`](evg/models/minimax_h3/configs/mpa-sm89-regular2d-mixed.json).
-Copy it and pass `--mpa-config PATH` to change sparsity, the FP8/FP16 split,
-tiling, or the dense-first schedule without editing Python source.
+[`examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml`](examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml).
+It is loaded by default. Pass a YAML path with `--mpa-config` to select an
+explicit or edited configuration:
+
+```bash
+scripts/run_minimax_h3.sh \
+  mpa-sm89-regular2d-mixed \
+  outputs/minimax-h3/mpa \
+  --mpa-config examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml
+```
+
+The configuration controls sparsity, the FP8/FP16 split, tiling, and the
+dense-first schedule without requiring Python source changes.
 
 See [the reproduction guide](evg/models/minimax_h3/REPRODUCTION.md) for pinned resource revisions, manual setup, smoke tests, output contracts, and resource overrides.
 
