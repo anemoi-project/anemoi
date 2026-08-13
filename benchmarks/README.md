@@ -18,16 +18,4 @@ Each benchmark should report:
 
 ## Draft Attention Smoke Commands
 
-Tiny CPU-safe synthetic checks:
-
-```bash
-scripts/run_wan22_draft_attention_smoke.sh --full-mask-check --compare-dense
-```
-
-CUDA full-shape checks:
-
-```bash
-EVG_FULL_SHAPE=1 EVG_DEVICE=cuda EVG_DTYPE=bfloat16 EVG_DRAFT_BACKEND=auto scripts/run_wan22_draft_attention_smoke.sh
-```
-
 The current end-to-end benchmark entry point is `scripts/run_minimax_h3.sh`.
