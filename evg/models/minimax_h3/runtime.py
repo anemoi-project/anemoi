@@ -20,6 +20,23 @@ def _model_root() -> Path:
     return Path(value)
 
 
+def _load_local_components(pipe, names: list[str]) -> None:
+    """Load selected modular components strictly from the prepared model tree."""
+
+    model_root = _model_root().resolve()
+    missing = [str(model_root / name) for name in names if not (model_root / name).is_dir()]
+    if missing:
+        raise FileNotFoundError(f"local model components are missing: {missing}")
+    pipe.load_components(
+        names=names,
+        pretrained_model_name_or_path=str(model_root),
+        local_files_only=True,
+    )
+    unloaded = [name for name in names if getattr(pipe, name, None) is None]
+    if unloaded:
+        raise RuntimeError(f"failed to load local model components: {unloaded}")
+
+
 class EvalTimer:
     """CUDA-event timing for every transformer evaluation."""
 
@@ -124,7 +141,7 @@ def build_denoise_pipe(transformer: torch.nn.Module):
         blocks.sub_blocks.pop(name)
     pipe = blocks.init_pipeline(_model_root())
     pipe.update_components(transformer=transformer)
-    pipe.load_components(names=["scheduler", "audio_scheduler"])
+    _load_local_components(pipe, ["scheduler", "audio_scheduler"])
     pipe.set_progress_bar_config(disable=False)
     return pipe
 
@@ -176,7 +193,7 @@ def decode_and_export(
     if len(latent_artifacts) != 1:
         raise ValueError("the compact demo decoder accepts one candidate per process")
     decode_pipe = MiniMaxH3DecodeStep().init_pipeline(_model_root())
-    decode_pipe.load_components(names=["vae", "audio_vae"])
+    _load_local_components(decode_pipe, ["vae", "audio_vae"])
     decode_pipe.vae.to("cuda")
     decode_pipe.audio_vae.to("cuda")
     torch.cuda.synchronize()

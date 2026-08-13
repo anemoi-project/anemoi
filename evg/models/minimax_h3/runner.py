@@ -21,15 +21,14 @@ import importlib
 import json
 import math
 import os
-from pathlib import Path
 import shutil
 import statistics
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from evg.models.minimax_h3.resources import CHECKPOINT_BYTES, CHECKPOINT_SHA256
-
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -51,6 +50,7 @@ DEFAULT_CHECKPOINT = Path(
     )
 )
 DEFAULT_CONDITIONING = PACKAGE_ROOT / "assets/official-example-1.pt"
+DEFAULT_MPA_CONFIG = PACKAGE_ROOT / "configs/mpa-sm89-regular2d-mixed.json"
 PROMPT_SHA256 = (
     "98f36b879692095e099ae824c18d9e93e7006a490e082fd474a5f531769dcf06"
 )
@@ -80,6 +80,16 @@ _MPA_PROFILES: dict[str, dict[str, Any]] = {
     }
 }
 CANDIDATES = ("dense", "official-sol", SM89_MAINLINE_CANDIDATE)
+_MPA_CONFIG_KEYS = {
+    "adaptive_tile",
+    "dense_first_layers",
+    "dense_first_steps",
+    "fp16_ratio",
+    "fp8_ratio",
+    "layer_sparsity_bands",
+    "sparsity_ratio",
+    "tile_shape",
+}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -114,6 +124,12 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         help="retained sparse blocks assigned to the exact FP16 rescue phase",
     )
+    parser.add_argument(
+        "--mpa-config",
+        type=Path,
+        default=DEFAULT_MPA_CONFIG,
+        help="JSON file containing the MPA sparsity, precision, and dense schedule",
+    )
     parser.add_argument("--height", type=int, default=768)
     parser.add_argument("--width", type=int, default=1344)
     parser.add_argument("--num-frames", type=int, default=124)
@@ -140,10 +156,116 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _read_mpa_config(path: Path) -> dict[str, Any]:
+    path = path.resolve()
+    try:
+        payload = json.loads(path.read_text())
+    except FileNotFoundError:
+        raise FileNotFoundError(f"MPA config does not exist: {path}") from None
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid MPA JSON config {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise TypeError("MPA config must be a JSON object")
+    unknown = sorted(set(payload) - _MPA_CONFIG_KEYS)
+    if unknown:
+        raise ValueError(f"unknown MPA config keys: {unknown}")
+    return payload
+
+
+def _finite_ratio(value: Any, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{name} must be a number")
+    result = float(value)
+    if not math.isfinite(result) or not 0.0 <= result < 1.0:
+        raise ValueError(f"{name} must be finite and in [0, 1)")
+    return result
+
+
+def _apply_mpa_config(profile: dict[str, Any], config: dict[str, Any]) -> None:
+    if ("fp8_ratio" in config) != ("fp16_ratio" in config):
+        raise ValueError("MPA config must provide fp8_ratio and fp16_ratio together")
+    if "fp8_ratio" in config:
+        fp8 = _finite_ratio(config["fp8_ratio"], "fp8_ratio")
+        fp16 = _finite_ratio(config["fp16_ratio"], "fp16_ratio")
+        if (
+            fp8 <= 0.0
+            or fp16 <= 0.0
+            or not math.isclose(fp8 + fp16, 1.0, abs_tol=1e-6)
+        ):
+            raise ValueError("FP8/FP16 ratios must be positive and sum to one")
+        profile["precision"] = {"fp8": fp8, "fp16": fp16}
+
+    if "sparsity_ratio" in config:
+        profile["video_sparsity_ratio"] = _finite_ratio(
+            config["sparsity_ratio"], "sparsity_ratio"
+        )
+
+    for name in ("dense_first_steps", "dense_first_layers"):
+        if name not in config:
+            continue
+        value = config[name]
+        if type(value) is not int or value < 0:
+            raise ValueError(f"{name} must be a nonnegative integer")
+        profile[name] = value
+    if int(profile.get("dense_first_layers", 2)) > 50:
+        raise ValueError("dense_first_layers cannot exceed 50")
+
+    if "adaptive_tile" in config:
+        if type(config["adaptive_tile"]) is not bool:
+            raise TypeError("adaptive_tile must be a boolean")
+        profile["adaptive_tile"] = config["adaptive_tile"]
+    if "tile_shape" in config:
+        tile = config["tile_shape"]
+        if (
+            not isinstance(tile, list)
+            or len(tile) != 2
+            or any(type(value) is not int or value <= 0 for value in tile)
+            or math.prod(tile) > 64
+        ):
+            raise ValueError("tile_shape must contain two positive integers with area <= 64")
+        profile["tile_shape"] = tuple(tile)
+
+    if "layer_sparsity_bands" in config:
+        bands = config["layer_sparsity_bands"]
+        if not isinstance(bands, list):
+            raise TypeError("layer_sparsity_bands must be an array")
+        resolved_bands: list[tuple[int, int, float]] = []
+        previous_end = 0
+        for band in bands:
+            if not isinstance(band, list) or len(band) != 3:
+                raise ValueError("each layer sparsity band must be [first, last, sparsity]")
+            first, last, sparsity = band
+            if (
+                type(first) is not int
+                or type(last) is not int
+                or not 0 <= first < last <= 50
+                or first < previous_end
+            ):
+                raise ValueError(
+                    "layer sparsity bands must be sorted, disjoint, and within 0..50"
+                )
+            resolved_bands.append(
+                (first, last, _finite_ratio(sparsity, "band sparsity"))
+            )
+            previous_end = last
+        profile["layer_sparsity_bands"] = tuple(resolved_bands)
+
+    base = float(profile["video_sparsity_ratio"])
+    per_layer = [base] * 50
+    for first, last, sparsity in profile.get("layer_sparsity_bands", ()):
+        per_layer[first:last] = [float(sparsity)] * (last - first)
+    first_sparse_layer = int(profile.get("dense_first_layers", 2))
+    sparse_layers = per_layer[first_sparse_layer:]
+    profile["average_sparse_layer_sparsity_ratio"] = (
+        round(sum(sparse_layers) / len(sparse_layers), 12) if sparse_layers else 0.0
+    )
+
+
 def _resolved_candidate(
     name: str,
     fp8_ratio: float | None = None,
     fp16_ratio: float | None = None,
+    mpa_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if name not in CANDIDATES:
         raise ValueError(f"unknown candidate {name!r}")
@@ -162,10 +284,14 @@ def _resolved_candidate(
                 "FP8/FP16 ratios must be finite, positive, and sum to one"
             )
     if name == "dense":
+        if mpa_config is not None:
+            raise ValueError("--mpa-config is only valid for MPA")
         if fp8_ratio is not None:
             raise ValueError("precision overrides are only valid for MPA")
         return {"kind": "dense"}
     if name == "official-sol":
+        if mpa_config is not None:
+            raise ValueError("--mpa-config is only valid for MPA")
         if fp8_ratio is not None:
             raise ValueError("official Sol is pinned to its published precision policy")
         return {
@@ -177,6 +303,8 @@ def _resolved_candidate(
             "sink_mode": "prefix",
         }
     profile = dict(_MPA_PROFILES[name])
+    if mpa_config is not None:
+        _apply_mpa_config(profile, mpa_config)
     if fp8_ratio is not None:
         assert fp16_ratio is not None
         profile["precision"] = {
@@ -242,6 +370,43 @@ def _state_value(state, name: str):
     return value
 
 
+def _configure_cuda_driver_link(cache_root: Path) -> None:
+    """Expose a 64-bit libcuda.so link for Triton's runtime helper build."""
+
+    library_paths = [
+        Path(item)
+        for item in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)
+        if item
+    ]
+    library_paths.extend(
+        (
+            Path("/lib/x86_64-linux-gnu"),
+            Path("/usr/lib/x86_64-linux-gnu"),
+            Path("/usr/lib64"),
+            Path("/lib64"),
+        )
+    )
+    driver = next(
+        (
+            directory / "libcuda.so.1"
+            for directory in library_paths
+            if (directory / "libcuda.so.1").is_file()
+        ),
+        None,
+    )
+    if driver is None:
+        return
+
+    link_root = cache_root / "driver-lib"
+    link_root.mkdir(parents=True, exist_ok=True)
+    link = link_root / "libcuda.so"
+    if link.is_symlink() and link.resolve() != driver.resolve():
+        link.unlink()
+    if not link.exists():
+        link.symlink_to(driver.resolve())
+    os.environ.setdefault("TRITON_LIBCUDA_PATH", str(link_root))
+
+
 def _configure_environment(args: argparse.Namespace) -> tuple[Path, Path]:
     gb10 = args.sol_root.resolve() / "models/minimax_h3/gb10_fp8"
     optimized = args.sol_root.resolve() / "models/minimax_h3/optimized"
@@ -263,18 +428,23 @@ def _configure_environment(args: argparse.Namespace) -> tuple[Path, Path]:
     os.environ.setdefault("H3_DIT_CHECKPOINT", str(args.checkpoint.resolve()))
     os.environ.setdefault("H3_SOL_ATTN_ROOT", str(args.sol_root.resolve() / "techniques/sparse_backends"))
     local_rank = os.environ.get("LOCAL_RANK", "0")
-    os.environ.setdefault("HF_HOME", "/dev/shm/mpa-h3-fp8-hf")
+    temporary_root = Path(os.environ.get("TMPDIR", "/tmp"))
+    cache_root = temporary_root / f"evg-mpa-{os.getuid()}"
+    _configure_cuda_driver_link(cache_root)
+    os.environ.setdefault("HF_HOME", str(cache_root / "hf"))
     os.environ.setdefault(
-        "TRITON_CACHE_DIR", f"/dev/shm/mpa-h3-fp8-triton-rank{local_rank}"
+        "TRITON_CACHE_DIR", str(cache_root / f"triton-rank{local_rank}")
     )
     os.environ.setdefault(
         "TORCHINDUCTOR_CACHE_DIR",
-        f"/dev/shm/mpa-h3-fp8-inductor-rank{local_rank}",
+        str(cache_root / f"inductor-rank{local_rank}"),
     )
-    os.environ.setdefault("XDG_CACHE_HOME", "/dev/shm/mpa-h3-fp8-xdg")
-    os.environ.setdefault("TMPDIR", "/dev/shm")
+    os.environ.setdefault("XDG_CACHE_HOME", str(cache_root / "xdg"))
+    os.environ.setdefault("TMPDIR", str(temporary_root))
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-    os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
+    os.environ.setdefault(
+        "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
+    )
 
     _prepend(REPO_ROOT)
     _prepend(args.diffusers_src.resolve() / "src")
@@ -336,7 +506,11 @@ def _warm_sparse_provider(
             prefix_tokens=prefix_tokens,
             video_shape=video_shape,
         )
-        output = attention.mpa(q, k, v, layer=2)
+        os.environ["EVG_MPA_WARMUP_SYNC"] = "1"
+        try:
+            output = attention.mpa(q, k, v, layer=2)
+        finally:
+            os.environ.pop("EVG_MPA_WARMUP_SYNC", None)
     torch.cuda.synchronize()
     del output, q, k, v
     gc.collect()
@@ -750,7 +924,9 @@ def _main_distributed(args: argparse.Namespace, candidate: dict[str, Any]) -> in
                 "attention_precision_note": (
                     "Scheduled dense calls and sparse-call prefix-query overwrites use "
                     "the original-dtype torch SDPA, matching Sol-H3. Active native K64 "
-                    "sparse attention assigns retained video blocks FP8/FP16=80/20; "
+                    "sparse attention assigns retained video blocks FP8/FP16="
+                    f"{candidate.get('precision', {}).get('fp8', 0.8):g}/"
+                    f"{candidate.get('precision', {}).get('fp16', 0.2):g}; "
                     "exact prefix K/V is FP16. Model weights are common pruned FP8."
                 ),
             },
@@ -861,6 +1037,9 @@ def main() -> int:
         args.candidate,
         args.fp8_ratio,
         args.fp16_ratio,
+        _read_mpa_config(args.mpa_config)
+        if args.candidate == SM89_MAINLINE_CANDIDATE
+        else None,
     )
     if args.print_config:
         print(json.dumps({"candidate": args.candidate, "policy": candidate}, indent=2))

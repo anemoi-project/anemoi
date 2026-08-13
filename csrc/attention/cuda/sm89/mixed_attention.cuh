@@ -401,7 +401,10 @@ __device__ __forceinline__ void compute_fp16_sv_stage_tilewise(
 
 // D128 mixed kernels also need to lower the donor FP8 PV peak.  The all-FP8
 // family keeps the donor helper unchanged; only the compile-time mixed family
-// changes loop order so one V tile's FP16 stage accumulator is live at once.
+// changes loop order so one V tile's stage accumulator is live at once. CUDA
+// 12.8 added FP8-input/FP16-accumulator MMA; CUDA 12.4-12.7 use the equivalent
+// FP32-accumulator instruction instead of compiling the unsupported path to a
+// device breakpoint.
 template <
     uint32_t Fv, uint32_t NumTilesQ, uint32_t NumTilesK,
     uint32_t NumTilesV, SwizzleMode Swizzle, uint32_t Stride>
@@ -411,7 +414,11 @@ __device__ __forceinline__ void compute_fp8_sv_stage_tilewise(
     float ro[][NumTilesV][8]) {
   if constexpr (Fv < NumTilesV) {
     {
+#ifdef MMA_F8F8F16_M16N8K16_ENABLED
       uint32_t ro_stage[NumTilesQ][4];
+#else
+      float ro_stage[NumTilesQ][8];
+#endif
       const uint32_t lane_id = get_lane_id();
       const uint32_t row_base = lane_id % 8 + (lane_id / 16) * 8;
       const uint32_t col_base = (lane_id / 8) % 2;
@@ -424,6 +431,7 @@ __device__ __forceinline__ void compute_fp8_sv_stage_tilewise(
         smem_v.ldmatrix_m8n8x4(v_offset, rv);
 #pragma unroll
         for (uint32_t fq = 0; fq < NumTilesQ; ++fq) {
+#ifdef MMA_F8F8F16_M16N8K16_ENABLED
           if (fk == 0) {
             mma::mma_sync_m16n16k32_row_col_f8f8f16<
                 mma::MMAMode::kInit>(ro_stage[fq], rs_fp8[fq][fk], rv);
@@ -432,11 +440,23 @@ __device__ __forceinline__ void compute_fp8_sv_stage_tilewise(
                 mma::MMAMode::kInplaceUpdate>(
                 ro_stage[fq], rs_fp8[fq][fk], rv);
           }
+#else
+          if (fk == 0) {
+            mma::mma_sync_m16n16k32_row_col_f8f8f32<
+                mma::MMAMode::kInit>(
+                ro_stage[fq], rs_fp8[fq][fk], rv);
+          } else {
+            mma::mma_sync_m16n16k32_row_col_f8f8f32<
+                mma::MMAMode::kInplaceUpdate>(
+                ro_stage[fq], rs_fp8[fq][fk], rv);
+          }
+#endif
         }
       }
 
 #pragma unroll
       for (uint32_t fq = 0; fq < NumTilesQ; ++fq) {
+#ifdef MMA_F8F8F16_M16N8K16_ENABLED
 #pragma unroll
         for (uint32_t pair = 0; pair < 4; ++pair) {
           float unpacked[2];
@@ -444,6 +464,12 @@ __device__ __forceinline__ void compute_fp8_sv_stage_tilewise(
           ro[fq][Fv][pair * 2] += unpacked[0];
           ro[fq][Fv][pair * 2 + 1] += unpacked[1];
         }
+#else
+#pragma unroll
+        for (uint32_t element = 0; element < 8; ++element) {
+          ro[fq][Fv][element] += ro_stage[fq][element];
+        }
+#endif
       }
     }
     compute_fp8_sv_stage_tilewise<

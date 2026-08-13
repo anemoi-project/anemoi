@@ -6,10 +6,11 @@ and 8x8 logical tiles. Its released sparse path drops unselected blocks.
 
 from __future__ import annotations
 
+import math
+import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
-import math
-from typing import Callable
 
 import torch
 
@@ -20,6 +21,15 @@ from evg.layers.attention.mpa.build_identity import (
 
 
 _BLOCK = 64
+
+
+def _warmup_sync(stage: str, device: torch.device) -> None:
+    if os.environ.get("EVG_MPA_WARMUP_SYNC") != "1":
+        return
+    try:
+        torch.cuda.synchronize(device)
+    except RuntimeError as exc:
+        raise RuntimeError(f"SM89 warm-up failed after {stage}") from exc
 
 
 @dataclass(frozen=True)
@@ -92,7 +102,9 @@ def prepare_k64_fp8_operands(
         _BLOCK,
         _BLOCK,
     )
+    _warmup_sync("Q/K quantization", query_fp16.device)
     v8, v_scale = _load_k64_ops().preprocess_v_fp8(value_fp16)
+    _warmup_sync("V preprocessing", query_fp16.device)
     return q8, k8, v8, q_scale, k_scale, v_scale
 
 

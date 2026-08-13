@@ -36,7 +36,6 @@ evg/
 Top-level directories:
 
 ```text
-benchmarks/       reproducible performance records
 csrc/             future C++/CUDA/Triton extension sources
 docs/             architecture, model support, and roadmap docs
 examples/         runnable generation examples

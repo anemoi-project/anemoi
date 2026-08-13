@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
 import math
+import os
+from functools import lru_cache
 
 import torch
 import torch.nn.functional as F
@@ -21,6 +22,15 @@ from evg.layers.attention.mpa.routing import (
 
 
 _BLOCK = 64
+
+
+def _warmup_sync(stage: str, device: torch.device) -> None:
+    if os.environ.get("EVG_MPA_WARMUP_SYNC") != "1":
+        return
+    try:
+        torch.cuda.synchronize(device)
+    except RuntimeError as exc:
+        raise RuntimeError(f"SM89 warm-up failed after {stage}") from exc
 
 
 def _pool_query(query_fp16: torch.Tensor, counts: torch.Tensor) -> torch.Tensor:
@@ -202,6 +212,7 @@ def sm89_regular2d_h3_attention(
         slot_valid,
         prefix_tokens,
     )
+    _warmup_sync("QKV packing", q_bshd.device)
     batch, heads, _, _ = q_packed.shape
     video_blocks = video_counts_1d.numel()
     video_counts = video_counts_1d.view(1, video_blocks).expand(
@@ -231,6 +242,7 @@ def sm89_regular2d_h3_attention(
         patches_h=math.ceil(height / tile_height),
         patches_w=math.ceil(width / tile_width),
     )
+    _warmup_sync("DraftMap routing", q_bshd.device)
 
     key_blocks = prefix_blocks + video_blocks
     ids = torch.zeros(
@@ -255,8 +267,11 @@ def sm89_regular2d_h3_attention(
         valid_k,
         fp16_prefix_blocks=prefix_blocks,
     )
+    _warmup_sync("mixed attention", q_bshd.device)
     del q_packed, key_fp16, value_fp16, valid_k, ids
-    return assemble_h3_k64_output(prefix_output, video_output, inverse)
+    output = assemble_h3_k64_output(prefix_output, video_output, inverse)
+    _warmup_sync("output assembly", q_bshd.device)
+    return output
 
 
 __all__ = ["sm89_regular2d_h3_attention"]

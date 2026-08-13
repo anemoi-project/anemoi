@@ -8,19 +8,33 @@ single controlled MiniMax-H3 inference stack. Dense is the quality baseline.
 From the EVG repository root:
 
 ```bash
+scripts/setup_conda_env.sh
+conda activate evg
+
 scripts/run_minimax_h3.sh \
   mpa-sm89-regular2d-mixed \
   outputs/minimax-h3/mpa
 ```
 
-On the first run, the script:
+The environment setup is required only once. On the first model run, the
+launcher:
 
-1. creates `models/minimax-h3/.venv` unless `EVG_PYTHON` is supplied;
-2. installs `requirements-minimax-h3.txt` if imports are unavailable;
-3. downloads the pinned Diffusers source and required model files;
-4. verifies the compressed checkpoint size and SHA256;
-5. builds the SM89 router and attention extensions for MPA;
-6. chooses a valid Ulysses degree and runs denoise plus decode.
+1. uses the active `evg` Conda environment (or `EVG_PYTHON` when supplied);
+2. downloads the pinned Diffusers source and required model files;
+3. verifies the compressed checkpoint size and SHA256;
+4. builds the SM89 router and attention extensions for MPA;
+5. chooses a valid Ulysses degree and runs denoise plus decode.
+
+The setup script selects a stack from the lowest driver version across visible
+GPUs:
+
+- driver 580.65.06 or newer: CUDA 13.0 and Torch 2.11 cu130;
+- driver 570.26 or newer: CUDA 12.8 and Torch 2.11 cu128;
+- driver 560.28.03 or newer: CUDA 12.6 and Torch 2.7 cu126.
+
+Run `scripts/setup_conda_env.sh --dry-run` to inspect the selection without
+creating or updating the environment. Older drivers are rejected because they
+are outside the native SM89 build profiles.
 
 Set `EVG_NUM_GPUS` to control the process count. MiniMax-H3 has 56 attention
 heads, so the value must divide 56 and cannot exceed the visible GPU count. The
@@ -59,12 +73,16 @@ managed download directory with `EVG_MINIMAX_H3_ROOT`.
 
 ## Manual environment and download
 
-The validated setup uses Python 3.12, CUDA toolkit 12.9.1, Torch 2.11.0, and
-Triton 3.6.0. To prepare it manually:
+The setup script installs Python 3.12 and a driver-compatible CUDA/Torch
+profile. If it cannot be used, prepare a virtual environment manually and
+install one of the profiles above before the remaining requirements:
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
+# Example for the CUDA 12.6 profile:
+python -m pip install torch==2.7.1 \
+  --index-url https://download.pytorch.org/whl/cu126
 python -m pip install -r requirements-minimax-h3.txt
 
 python -m evg.models.minimax_h3.resources \
@@ -87,8 +105,8 @@ cannot be mixed accidentally.
 
 ```bash
 export MPA_PYTHON="$PWD/.venv/bin/python"
-export MPA_CUDA_HOME=/absolute/path/to/cuda-12.9
-export MPA_BUILD_ROOT=/dev/shm/evg-mpa-build
+export MPA_CUDA_HOME=/absolute/path/to/selected-conda-environment
+export MPA_BUILD_ROOT="${TMPDIR:-/tmp}/evg-mpa-build-${UID}"
 
 scripts/build_router_cuda.sh
 scripts/build_attention_cuda.sh
@@ -154,7 +172,46 @@ scripts/run_minimax_h3.sh \
   --decode-only
 ```
 
-## Optional precision split
+## MPA configuration
+
+The released policy is
+[`configs/mpa-sm89-regular2d-mixed.json`](configs/mpa-sm89-regular2d-mixed.json).
+Copy the file before changing an experiment:
+
+```bash
+cp evg/models/minimax_h3/configs/mpa-sm89-regular2d-mixed.json \
+  /tmp/my-mpa-config.json
+
+scripts/run_minimax_h3.sh \
+  mpa-sm89-regular2d-mixed \
+  outputs/minimax-h3/mpa-custom \
+  --mpa-config /tmp/my-mpa-config.json
+```
+
+The JSON controls the base and per-layer sparsity, retained-block FP8/FP16
+split, dense-first steps/layers, and tile selection. Unknown fields and invalid
+ranges are rejected instead of being silently ignored.
+
+The fields have the following meanings:
+
+| Field | Meaning |
+| --- | --- |
+| `sparsity_ratio` | Fraction of routed video block pairs dropped in MPA layers that are not covered by `layer_sparsity_bands`. For example, `0.9` retains approximately 10% of the block pairs. The router rounds the retained count and always keeps at least one pair. |
+| `layer_sparsity_bands` | Per-layer overrides written as `[first, last, sparsity]`. Layer ranges are zero-based and half-open: `[18, 34, 0.85]` applies 85% sparsity to layers 18 through 33. Bands must be sorted, non-overlapping, and within the 50-layer transformer stack. Layers outside the bands use `sparsity_ratio`. |
+| `fp8_ratio` | Target fraction of retained sparse block pairs assigned to the FP8 attention phase. |
+| `fp16_ratio` | Target fraction of retained sparse block pairs assigned to the FP16 rescue phase. It must be positive and sum to one with `fp8_ratio`. Mandatory spatial-cross anchors may be promoted from FP8 to FP16 without changing the total retained budget. |
+| `dense_first_steps` | Number of initial denoising steps that use original-dtype dense SDPA for every transformer layer. The released value is 10. |
+| `dense_first_layers` | Number of leading transformer layers that remain dense at every denoising step. With value 2, zero-based layers 0 and 1 remain dense after the initial dense-only steps. |
+| `adaptive_tile` | When `true`, select a validated logical tile from 8x8, 8x7, and 7x8 according to the requested video shape. When `false`, use `tile_shape` directly. |
+| `tile_shape` | Fixed logical `[height, width]` tile used only when `adaptive_tile` is `false`. Both dimensions must be positive and their product cannot exceed the physical K64 capacity. |
+
+The dense guards take precedence over sparsity settings: a call selected by
+`dense_first_steps` or `dense_first_layers` does not enter the sparse FP8/FP16
+path. The resolved policy, including the derived average sparse-layer ratio, is
+available through `--print-config` and is recorded with the run artifacts.
+
+For a precision-only ablation, command-line overrides are also available and
+take precedence over the JSON file.
 
 The released MPA default is FP8/FP16 = 0.8/0.2. An ablation must provide both
 positive ratios and they must sum to one:
