@@ -8,7 +8,7 @@ layer_sparsity_bands:
   - [18, 34, 0.85]
   - [34, 50, 0.65]
 
-# Split retained sparse block pairs between the FP8 and FP16 phases. The two
+# Split retained block pairs between the FP8 and FP16 phases. The two
 # positive values must add up to 1.0.
 fp8_ratio: 0.8
 fp16_ratio: 0.2
