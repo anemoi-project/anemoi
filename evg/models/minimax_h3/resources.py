@@ -59,11 +59,17 @@ def prepare_diffusers(path: Path) -> Path:
             f"Diffusers target is not a Git checkout and will not be overwritten: {path}"
         )
 
+    # ``git clone --no-checkout`` leaves an empty worktree whose index can look
+    # like a staged deletion of every tracked file. It is safe to recover that
+    # state because no user files exist outside ``.git``.
+    empty_worktree = not any(entry.name != ".git" for entry in path.iterdir())
     dirty = _run_git("status", "--porcelain", cwd=path)
-    if dirty:
+    if dirty and not empty_worktree:
         raise RuntimeError(
             f"Diffusers checkout has local changes and will not be modified: {path}"
         )
+    if dirty:
+        _run_git("reset", "--hard", "HEAD", cwd=path)
     head = _run_git("rev-parse", "HEAD", cwd=path)
     source_ready = (path / "src/diffusers/__init__.py").is_file()
     if head != DIFFUSERS_COMMIT:

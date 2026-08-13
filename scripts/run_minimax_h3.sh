@@ -16,11 +16,25 @@ case "${candidate}" in
 esac
 
 resource_root="${EVG_MINIMAX_H3_ROOT:-${repo_root}/models/minimax-h3}"
-export HF_HOME="${HF_HOME:-/dev/shm/evg-h3-hf}"
-export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/dev/shm/evg-h3-xdg}"
 export TMPDIR="${TMPDIR:-/dev/shm}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+cache_namespace="evg-h3-$(id -u)"
+export HF_HOME="${HF_HOME:-${TMPDIR}/${cache_namespace}/hf}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${TMPDIR}/${cache_namespace}/xdg}"
 if [[ -n "${EVG_PYTHON:-}" ]]; then
   python_bin="${EVG_PYTHON}"
+  python_path="$(command -v "${python_bin}" 2>/dev/null || true)"
+  if [[ -n "${python_path}" ]]; then
+    python_prefix="$(cd "$(dirname "${python_path}")/.." && pwd)"
+  fi
+  if [[ -n "${python_prefix:-}" && -x "${python_prefix}/bin/nvcc" ]]; then
+    export MPA_CUDA_HOME="${MPA_CUDA_HOME:-${python_prefix}}"
+  fi
+elif [[ "${CONDA_DEFAULT_ENV:-}" == "evg" && -n "${CONDA_PREFIX:-}" ]]; then
+  python_bin="${CONDA_PREFIX}/bin/python"
+  if [[ -x "${CONDA_PREFIX}/bin/nvcc" ]]; then
+    export MPA_CUDA_HOME="${MPA_CUDA_HOME:-${CONDA_PREFIX}}"
+  fi
 else
   venv_root="${EVG_MINIMAX_H3_VENV:-${resource_root}/.venv}"
   python_bin="${venv_root}/bin/python"
@@ -58,11 +72,6 @@ fi
 
 export MPA_PYTHON="${python_bin}"
 
-if [[ "${candidate}" == "mpa-sm89-regular2d-mixed" ]]; then
-  "${repo_root}/scripts/build_router_cuda.sh"
-  "${repo_root}/scripts/build_attention_cuda.sh"
-fi
-
 single_process=0
 height_set=0
 width_set=0
@@ -78,6 +87,11 @@ done
 if (( height_set != width_set )); then
   echo "set --height and --width together" >&2
   exit 2
+fi
+
+if [[ "${candidate}" == "mpa-sm89-regular2d-mixed" && "${single_process}" == "0" ]]; then
+  "${repo_root}/scripts/build_router_cuda.sh"
+  "${repo_root}/scripts/build_attention_cuda.sh"
 fi
 
 runner_args=(

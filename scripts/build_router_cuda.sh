@@ -17,7 +17,7 @@ export PATH="${cuda_root}/bin:${PATH}"
 export TORCH_CUDA_ARCH_LIST="${MPA_TORCH_CUDA_ARCH_LIST:-8.9}"
 export MAX_JOBS="${MPA_MAX_JOBS:-4}"
 
-build_root="${MPA_BUILD_ROOT:-/dev/shm/evg-mpa-build}"
+build_root="${MPA_BUILD_ROOT:-${TMPDIR:-/tmp}/evg-mpa-build-${UID}}"
 mkdir -p "${build_root}/router/temp" "${build_root}/router/lib"
 cd "${repo_root}"
 MPA_BUILD_COMPONENTS=router "${python_bin}" setup.py build_ext \
