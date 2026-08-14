@@ -1,6 +1,9 @@
 # EVG Project
 
-Efficient Visual Generation (EVG) is an inference-only framework for fast visual generation, especially for fast video generation. The current executable model family is MiniMax-H3 with EVG's adaptive [Draft Attention](https://arxiv.org/pdf/2505.14708) routing and native SM89 FP8/FP16 Mixed-Precision Attention (MPA).
+Efficient Visual Generation (EVG) is an inference-only, training-free framework for high-performance visual generation, with a special focus on video generation.
+Unlike existing approaches that operate primarily on flattened 1D token sequences for attention design, EVG reasons over spatially structured 2D visual regions ([Draft Attention](https://arxiv.org/pdf/2505.14708)) to identify redundancy and adaptively route attention computation.
+
+Currently, EVG supports sparse attention and native SM89 FP8/FP16 Mixed-Precision Attention (MPA) for attention acceleration. The executable model family now is MiniMax-H3 on 4090 GPU.
 
 ## Installation
 
@@ -21,7 +24,7 @@ For framework-only development, run the checks after activating the environment:
 python -m unittest discover -s tests
 ```
 
-## MiniMax-H3 quick start
+## MiniMax-H3 Quick Start
 
 After activating the `evg` environment, the launcher downloads only the required model components and compressed DiT, builds the native MPA extensions, selects a valid number of visible GPUs, and generates the demo video:
 
@@ -75,7 +78,53 @@ dense-first schedule without requiring Python source changes.
 
 See [the reproduction guide](evg/models/minimax_h3/REPRODUCTION.md) for pinned resource revisions, manual setup, smoke tests, output contracts, and resource overrides.
 
-## Repository layout
+## Visualization Examples
+
+Each video is generated at 1344×768 resolution, with 239 frames at 24 FPS. Latency is tested on 4x4090 GPUs. **Only attention acceleration methods** are adopted during video generation. The five panels are ordered from left to right as
+follows:
+
+| Baseline | Sol-Attn | EVG | EVG | EVG |
+|:---:|:---:|:---:|:---:|:---:|
+| Dense | ~75% sparsity | 80% sparsity | 80% sparsity + 10% FP8 | 80% sparsity + 20% FP8 |
+| 425.93s | 346.85s (1.23x) | 343.83s (1.24x) | 338.63s (1.26x) | 335.54s (1.27x) |
+
+**Eagle in Flight**
+
+![Eagle in flight comparison](asserts/visualization/previews/eagle-in-flight.gif)
+
+[Full-resolution MP4](asserts/visualization/鹰击长空.mp4)
+
+**Night Street Photography**
+
+![Night street photography comparison](asserts/visualization/previews/night-street-photography.gif)
+
+[Full-resolution MP4](asserts/visualization/夜街摄影.mp4)
+
+**Tea Ceremony**
+
+![Tea ceremony comparison](asserts/visualization/previews/tea-ceremony.gif)
+
+[Full-resolution MP4](asserts/visualization/茶道.mp4)
+
+**3D Animated Short**
+
+![3D animated short comparison](asserts/visualization/previews/3d-animated-short.gif)
+
+[Full-resolution MP4](asserts/visualization/3D动画短片.mp4)
+
+**Nature Documentary**
+
+![Nature documentary comparison](asserts/visualization/previews/nature-documentary.gif)
+
+[Full-resolution MP4](asserts/visualization/自然纪录片.mp4)
+
+**Macro Insect**
+
+![Macro insect comparison](asserts/visualization/previews/macro-insect.gif)
+
+[Full-resolution MP4](asserts/visualization/微距昆虫.mp4)
+
+## Repository Layout
 
 - `evg/models/minimax_h3/`: model adapter, runner, resource downloader, and
   package-local Sol runtime

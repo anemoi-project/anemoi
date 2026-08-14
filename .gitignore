@@ -14,5 +14,6 @@ outputs/
 checkpoints/
 /models/
 *.mp4
+!asserts/*.mp4
 *.safetensors
 *.ckpt
