@@ -1,4 +1,4 @@
-"""MiniMax-H3 adapter for the released SM89 mixed-attention demo."""
+"""MiniMax-H3 adapter for stripe-compact ragged mixed attention."""
 
 from __future__ import annotations
 
@@ -12,8 +12,7 @@ import torch.nn.functional as F
 
 from evg.layers.attention.mpa._private_h3_layout import _is_exact_h3_packed_qkv
 
-from .native_k64_attention import sm89_regular2d_h3_attention
-from .sm89_mainline import select_sm89_adaptive_2d_plan
+from .native_k64_attention import sm89_ragged_h3_attention
 
 
 try:
@@ -30,18 +29,17 @@ class H3MPAConfig:
 
     video_shape: tuple[int, int, int] = (37, 24, 42)
     prefix_tokens: int = 951
-    sparsity_ratio: float = 0.90
+    sparsity_ratio: float = 0.88
     fp8_ratio: float = 0.80
     fp16_ratio: float = 0.20
     dense_first_steps: int = 10
     dense_first_layers: int = 2
     layers_per_step: int = 50
     layer_sparsity_bands: tuple[tuple[int, int, float], ...] = (
-        (18, 34, 0.85),
-        (34, 50, 0.65),
+        (18, 34, 0.82),
+        (34, 50, 0.58),
     )
-    adaptive_tile: bool = True
-    tile_shape: tuple[int, int] = (8, 8)
+    diag_jensen: bool = False
     strict: bool = True
 
     def __post_init__(self) -> None:
@@ -75,15 +73,8 @@ class H3MPAConfig:
             or not math.isclose(sum(ratios), 1.0, abs_tol=1.0e-6)
         ):
             raise ValueError("FP8/FP16 ratios must be positive and sum to one")
-        if (
-            not isinstance(self.tile_shape, tuple)
-            or len(self.tile_shape) != 2
-            or any(type(value) is not int or value <= 0 for value in self.tile_shape)
-            or math.prod(self.tile_shape) > 64
-        ):
-            raise ValueError("tile_shape must contain positive dimensions with area <= 64")
-        if type(self.adaptive_tile) is not bool or type(self.strict) is not bool:
-            raise TypeError("adaptive_tile and strict must be bool")
+        if type(self.diag_jensen) is not bool or type(self.strict) is not bool:
+            raise TypeError("diag_jensen and strict must be bool")
 
         previous_end = 0
         for band in self.layer_sparsity_bands:
@@ -179,11 +170,6 @@ class H3MPAAttention:
         if not isinstance(config, H3MPAConfig):
             raise TypeError("config must be H3MPAConfig")
         self.config = config
-        self.tile_shape = (
-            select_sm89_adaptive_2d_plan(config.video_shape).logical_tile
-            if config.adaptive_tile
-            else config.tile_shape
-        )
         self.step = -1
         self.layer = 0
         self.request = -1
@@ -303,7 +289,7 @@ class H3MPAAttention:
             q_full = q.unsqueeze(0).contiguous()
             k_full = k.unsqueeze(0).contiguous()
             v_full = v.unsqueeze(0).contiguous()
-        return sm89_regular2d_h3_attention(
+        return sm89_ragged_h3_attention(
             q_full,
             k_full,
             v_full,
@@ -312,7 +298,7 @@ class H3MPAAttention:
             retained_fp8_ratio=self.config.fp8_ratio,
             retained_fp16_ratio=self.config.fp16_ratio,
             video_shape=self.config.video_shape,
-            tile_shape=self.tile_shape,
+            diag_jensen=self.config.diag_jensen,
         ).squeeze(0)
 
     def __call__(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
@@ -330,7 +316,7 @@ class H3MPAAttention:
         total = self.dense_calls + self.mpa_calls
         return {
             "config": self.config.to_dict(),
-            "selected_tile_shape": list(self.tile_shape),
+            "routing_block_size": 64,
             "request": self.request,
             "step": self.step,
             "layer": self.layer,

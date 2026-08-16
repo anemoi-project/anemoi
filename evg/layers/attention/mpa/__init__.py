@@ -1,3 +1,5 @@
-"""SM89 mixed-attention runtime used by the MiniMax-H3 EVG demo."""
+"""Ragged mixed-precision attention runtime."""
 
-__all__: list[str] = []
+from .ragged_2d import Ragged2DPartition, make_ragged_2d_partition
+
+__all__ = ["Ragged2DPartition", "make_ragged_2d_partition"]

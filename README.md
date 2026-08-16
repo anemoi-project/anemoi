@@ -3,7 +3,7 @@
 Efficient Visual Generation (EVG) is an inference-only, training-free framework for high-performance visual generation, with a special focus on video generation.
 Unlike existing approaches that operate primarily on flattened 1D token sequences for attention design, EVG reasons over spatially structured 2D visual regions ([Draft Attention](https://arxiv.org/pdf/2505.14708)) to identify redundancy and adaptively route attention computation.
 
-Currently, EVG supports sparse attention and native SM89 FP8/FP16 Mixed-Precision Attention (MPA) for attention acceleration. The executable model family now is MiniMax-H3 on 4090 GPU.
+Currently, EVG supports stripe-compact ragged 2-D routing and native SM89 FP8/FP16 Mixed-Precision Attention (MPA) for attention acceleration. The executable model family now is MiniMax-H3 on 4090 GPU.
 
 ## Installation
 
@@ -34,7 +34,7 @@ scripts/run_minimax_h3.sh
 
 By default, resources are stored under the ignored
 `models/minimax-h3/` directory and output is written to
-`outputs/minimax-h3/mpa-sm89-regular2d-mixed/out.mp4`.
+`outputs/minimax-h3/mpa-ragged2d-mixed/out.mp4`.
 
 Requirements:
 
@@ -56,24 +56,25 @@ Use the same runner for the controlled attention references:
 ```bash
 scripts/run_minimax_h3.sh dense outputs/minimax-h3/dense
 scripts/run_minimax_h3.sh official-sol outputs/minimax-h3/official-sol
-scripts/run_minimax_h3.sh mpa-sm89-regular2d-mixed outputs/minimax-h3/mpa
+scripts/run_minimax_h3.sh mpa-ragged2d-mixed outputs/minimax-h3/mpa
 ```
 
 Dense is the quality baseline; the state-of-the-art method [Sol-Attn](https://github.com/NVlabs/Sana/tree/sol-engine) is introduced as a reference implementation. All three paths use the same checkpoint, conditioning, model fusions, Ulysses degree, seed, scheduler, and decoder.
 
 The released MPA policy is stored in
-[`examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml`](examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml).
+[`examples/minimax-h3/mpa-ragged2d-mixed.yaml`](examples/minimax-h3/mpa-ragged2d-mixed.yaml).
 It is loaded by default. Pass a YAML path with `--mpa-config` to select an
 explicit or edited configuration:
 
 ```bash
 scripts/run_minimax_h3.sh \
-  mpa-sm89-regular2d-mixed \
+  mpa-ragged2d-mixed \
   outputs/minimax-h3/mpa \
-  --mpa-config examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml
+  --mpa-config examples/minimax-h3/mpa-ragged2d-mixed.yaml
 ```
 
-The configuration controls sparsity, the FP8/FP16 split, tiling, and the
+The configuration controls sparsity, the FP8/FP16 split, the optional
+diagonal-Jensen correction, and the
 dense-first schedule without requiring Python source changes.
 
 See [the reproduction guide](evg/models/minimax_h3/REPRODUCTION.md) for pinned resource revisions, manual setup, smoke tests, output contracts, and resource overrides.
@@ -129,7 +130,7 @@ follows:
 - `evg/models/minimax_h3/`: model adapter, runner, resource downloader, and
   package-local Sol runtime
 - `evg/layers/attention/mpa/`: reusable MPA routing and SM89 backend
-- `csrc/`: native router and mixed-attention CUDA sources
+- `csrc/`: native mixed-attention CUDA sources
 - `scripts/run_minimax_h3.sh`: download-to-video entry point
 - `scripts/build_*_cuda.sh`: standalone native-extension builds
 

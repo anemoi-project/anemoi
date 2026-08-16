@@ -27,12 +27,12 @@ class MiniMaxH3Adapter(VideoModelAdapter):
                 "'official-example-1' conditioning only"
             )
         candidate = str(
-            request.extra.get("candidate", "mpa-sm89-regular2d-mixed")
+            request.extra.get("candidate", "mpa-ragged2d-mixed")
         )
         if candidate not in {
             "dense",
             "official-sol",
-            "mpa-sm89-regular2d-mixed",
+            "mpa-ragged2d-mixed",
         }:
             raise AdapterError(f"unsupported MiniMax-H3 candidate: {candidate}")
         repository = Path(__file__).resolve().parents[3]

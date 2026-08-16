@@ -16,10 +16,10 @@ ROOT = Path(__file__).resolve().parent
 
 
 def _requested_components() -> set[str]:
-    value = os.environ.get("MPA_BUILD_COMPONENTS", "router,sm89")
+    value = os.environ.get("MPA_BUILD_COMPONENTS", "sm89")
     requested = {item.strip() for item in value.split(",") if item.strip()}
     aliases = {"attention": "sm89"}
-    known = {"router", "sm89", *aliases}
+    known = {"sm89", *aliases}
     unknown = requested - known
     if unknown:
         raise RuntimeError(
@@ -50,32 +50,6 @@ def _extensions():
 
     components = _requested_components()
     modules = []
-
-    if "router" in components:
-        router = ROOT / "csrc" / "router" / "cuda"
-        modules.append(
-            CUDAExtension(
-                name="evg.layers.attention.mpa._cuda_router",
-                sources=[
-                    str(router / "bindings.cpp"),
-                    str(router / "draft_probability.cu"),
-                    str(router / "routing.cu"),
-                ],
-                include_dirs=[str(router), str(router.parent)],
-                libraries=["cublas"],
-                extra_compile_args={
-                    "cxx": ["-O3", "-std=c++17"],
-                    "nvcc": [
-                        "-O3",
-                        "-std=c++17",
-                        "-U__CUDA_NO_HALF_OPERATORS__",
-                        "-U__CUDA_NO_HALF_CONVERSIONS__",
-                        "-lineinfo",
-                        "-Xptxas=-v",
-                    ],
-                },
-            )
-        )
 
     if "sm89" in components:
         attention = ROOT / "csrc" / "attention" / "cuda"

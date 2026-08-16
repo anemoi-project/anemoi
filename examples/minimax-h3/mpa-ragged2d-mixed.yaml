@@ -1,0 +1,21 @@
+# Production stripe-compact ragged 2-D routing policy.
+# Outside the two bands, 88% of video block pairs are dropped.
+sparsity_ratio: 0.88
+
+# Zero-based, half-open layer ranges: [first_layer, last_layer, sparsity].
+layer_sparsity_bands:
+  - [18, 34, 0.82]
+  - [34, 50, 0.58]
+
+# Split retained block pairs between the native FP8 and FP16 phases.
+fp8_ratio: 0.8
+fp16_ratio: 0.2
+
+# Keep all transformer layers dense for the first 10 denoising steps, and keep
+# the first two transformer layers dense for every step.
+dense_first_steps: 10
+dense_first_layers: 2
+
+# Add the optional diagonal-Jensen second-moment correction to the fixed
+# pooled-QK probability score.
+diag_jensen: false

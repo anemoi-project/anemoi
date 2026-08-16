@@ -1,8 +1,4 @@
-"""Native SM89 Q64 x K64 mixed-attention building blocks.
-
-The EVG MiniMax-H3 profile uses this one physical mainloop for adaptive 8x7
-and 8x8 logical tiles. Its released sparse path drops unselected blocks.
-"""
+"""Native SM89 Q64 x K64 executor for stripe-compact ragged routing."""
 
 from __future__ import annotations
 
@@ -43,7 +39,6 @@ class _K64Ops:
 @lru_cache(maxsize=1)
 def _load_k64_ops() -> _K64Ops:
     import_native_extension("attention")
-    import_native_extension("router")
     return _K64Ops(
         mixed_attention=resolve_mixed_attention_operator(
             "k64_mixed_attention_forward"
@@ -164,7 +159,7 @@ def pack_h3_k64_qkv(
     video_slot_valid: torch.Tensor,
     prefix_tokens: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Pack exact prefix K/V and adaptive-2D video Q/K/V in one launch."""
+    """Pack exact prefix K/V and stripe-ragged video Q/K/V in one launch."""
 
     if query_bhtd.shape != key_bhtd.shape or query_bhtd.shape != value_bhtd.shape:
         raise ValueError("H3 K64 Q/K/V must share [B,H,T,D] shape")

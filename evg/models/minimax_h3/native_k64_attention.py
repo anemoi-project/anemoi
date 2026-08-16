@@ -1,10 +1,9 @@
-"""Adaptive regular-2D DraftMap attention for MiniMax-H3 on SM89."""
+"""Native SM89 executor for the production stripe-compact ragged route."""
 
 from __future__ import annotations
 
 import math
 import os
-from functools import lru_cache
 
 import torch
 import torch.nn.functional as F
@@ -15,9 +14,10 @@ from evg.layers.attention.mpa.backends.sm89_k64 import (
     pack_h3_k64_qkv,
     pool_compact_k64_key,
 )
+from evg.layers.attention.mpa.layout import materialize_ragged_2d_layout
 from evg.layers.attention.mpa.routing import (
-    compute_draft_probability_tensors,
-    route_draft_spatial_cross_precision_tensors,
+    draft_probability,
+    route_probability,
 )
 
 
@@ -46,77 +46,6 @@ def _pool_query(query_fp16: torch.Tensor, counts: torch.Tensor) -> torch.Tensor:
     )
 
 
-@lru_cache(maxsize=32)
-def _compact_raster2d_indices(
-    device_index: int,
-    frames: int,
-    height: int,
-    width: int,
-    tile_height: int,
-    tile_width: int,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Pack every logical 2-D tile into one independent physical K64 block."""
-
-    if any(
-        type(value) is not int or value <= 0
-        for value in (frames, height, width, tile_height, tile_width)
-    ):
-        raise ValueError("video and tile dimensions must be positive integers")
-    tile_tokens = tile_height * tile_width
-    if tile_tokens > _BLOCK:
-        raise ValueError("the SM89 demo requires logical tile area <= 64")
-
-    device = torch.device("cuda", device_index)
-    patches_h = math.ceil(height / tile_height)
-    patches_w = math.ceil(width / tile_width)
-    frame = torch.arange(frames, device=device, dtype=torch.int64).view(
-        frames, 1, 1, 1, 1
-    )
-    patch_h = torch.arange(patches_h, device=device, dtype=torch.int64).view(
-        1, patches_h, 1, 1, 1
-    )
-    patch_w = torch.arange(patches_w, device=device, dtype=torch.int64).view(
-        1, 1, patches_w, 1, 1
-    )
-    local_h = torch.arange(tile_height, device=device, dtype=torch.int64).view(
-        1, 1, 1, tile_height, 1
-    )
-    local_w = torch.arange(tile_width, device=device, dtype=torch.int64).view(
-        1, 1, 1, 1, tile_width
-    )
-    raster_h = patch_h * tile_height + local_h
-    raster_w = patch_w * tile_width + local_w
-    valid = ((raster_h < height) & (raster_w < width)).expand(
-        frames, patches_h, patches_w, tile_height, tile_width
-    )
-    raw = (
-        frame * height * width + raster_h * width + raster_w
-    ).expand(frames, patches_h, patches_w, tile_height, tile_width)
-
-    logical = raw.reshape(-1, tile_tokens)
-    logical_valid = valid.reshape(-1, tile_tokens)
-    video_tokens = frames * height * width
-    compact = torch.where(logical_valid, logical, video_tokens).sort(dim=-1).values
-    counts = logical_valid.sum(dim=-1, dtype=torch.int32).contiguous()
-    physical = torch.zeros(
-        (compact.size(0), _BLOCK), device=device, dtype=torch.int64
-    )
-    slot = torch.arange(tile_tokens, device=device).view(1, tile_tokens)
-    physical[:, :tile_tokens].copy_(
-        torch.where(slot < counts.view(-1, 1), compact, torch.zeros_like(compact))
-    )
-    slot_valid = (
-        torch.arange(_BLOCK, device=device).view(1, _BLOCK)
-        < counts.view(-1, 1)
-    ).contiguous()
-    flat = physical.reshape(-1)
-    flat_valid = slot_valid.reshape(-1)
-    inverse = torch.empty(video_tokens, device=device, dtype=torch.int64)
-    physical_slots = torch.arange(flat.numel(), device=device, dtype=torch.int64)
-    inverse.scatter_(0, flat[flat_valid], physical_slots[flat_valid])
-    return flat, flat_valid.contiguous(), counts, inverse
-
-
 def _dense_prefix_sdpa(
     query_bshd: torch.Tensor,
     key_bshd: torch.Tensor,
@@ -133,7 +62,7 @@ def _dense_prefix_sdpa(
     )
 
 
-def sm89_regular2d_h3_attention(
+def sm89_ragged_h3_attention(
     q_bshd: torch.Tensor,
     k_bshd: torch.Tensor,
     v_bshd: torch.Tensor,
@@ -143,9 +72,9 @@ def sm89_regular2d_h3_attention(
     retained_fp8_ratio: float,
     retained_fp16_ratio: float,
     video_shape: tuple[int, int, int],
-    tile_shape: tuple[int, int],
+    diag_jensen: bool = False,
 ) -> torch.Tensor:
-    """Run the released FP8+FP16 K64 path and return contiguous BSHD output."""
+    """Run ragged 2-D routing through the optimized native Q64xK64 kernel."""
 
     if q_bshd.shape != k_bshd.shape or q_bshd.shape != v_bshd.shape:
         raise ValueError("Q/K/V must share [1,S,H,128]")
@@ -172,13 +101,8 @@ def sm89_regular2d_h3_attention(
         or math.prod(video_shape) != q_bshd.size(1) - prefix_tokens
     ):
         raise ValueError("video_shape must match the post-prefix token count")
-    if (
-        not isinstance(tile_shape, tuple)
-        or len(tile_shape) != 2
-        or any(type(value) is not int or value <= 0 for value in tile_shape)
-        or math.prod(tile_shape) > _BLOCK
-    ):
-        raise ValueError("tile_shape must contain positive dimensions with area <= 64")
+    if type(diag_jensen) is not bool:
+        raise TypeError("diag_jensen must be bool")
     ratios = (float(retained_fp8_ratio), float(retained_fp16_ratio))
     if (
         any(not math.isfinite(value) or value < 0.0 for value in ratios)
@@ -189,58 +113,81 @@ def sm89_regular2d_h3_attention(
         raise ValueError("FP8/FP16 ratios must be positive and sum to one")
 
     frames, height, width = video_shape
-    tile_height, tile_width = tile_shape
-    prefix_output = _dense_prefix_sdpa(
-        q_bshd[:, :prefix_tokens], k_bshd, v_bshd
-    )
-    device_index = q_bshd.device.index
-    if device_index is None:
-        device_index = torch.cuda.current_device()
-    indices, slot_valid, video_counts_1d, inverse = _compact_raster2d_indices(
-        device_index,
-        frames,
-        height,
-        width,
-        tile_height,
-        tile_width,
+    prefix_output = _dense_prefix_sdpa(q_bshd[:, :prefix_tokens], k_bshd, v_bshd)
+    layout = materialize_ragged_2d_layout(
+        q_bshd.device,
+        frames=frames,
+        height=height,
+        width=width,
+        logical_block=_BLOCK,
     )
     q_packed, key_fp16, value_fp16 = pack_h3_k64_qkv(
         q_bshd.permute(0, 2, 1, 3),
         k_bshd.permute(0, 2, 1, 3),
         v_bshd.permute(0, 2, 1, 3),
-        indices,
-        slot_valid,
+        layout.indices,
+        layout.slot_valid,
         prefix_tokens,
     )
     _warmup_sync("QKV packing", q_bshd.device)
     batch, heads, _, _ = q_packed.shape
-    video_blocks = video_counts_1d.numel()
-    video_counts = video_counts_1d.view(1, video_blocks).expand(
-        batch, video_blocks
-    ).contiguous()
+    video_blocks = layout.counts.numel()
+    video_counts = layout.counts.view(1, video_blocks).expand(batch, video_blocks).contiguous()
     prefix_blocks = math.ceil(prefix_tokens / _BLOCK)
     prefix_capacity = prefix_blocks * _BLOCK
-    prefix_counts = torch.clamp(
-        prefix_tokens
-        - torch.arange(prefix_blocks, device=q_bshd.device, dtype=torch.int32)
-        * _BLOCK,
-        min=0,
-        max=_BLOCK,
-    ).view(1, prefix_blocks).expand(batch, prefix_blocks).contiguous()
+    prefix_counts = (
+        torch.clamp(
+            prefix_tokens
+            - torch.arange(prefix_blocks, device=q_bshd.device, dtype=torch.int32) * _BLOCK,
+            min=0,
+            max=_BLOCK,
+        )
+        .view(1, prefix_blocks)
+        .expand(batch, prefix_blocks)
+        .contiguous()
+    )
     valid_k = torch.cat((prefix_counts, video_counts), dim=1).contiguous()
     key_video = key_fp16[:, :, prefix_capacity:]
 
     q_pool = _pool_query(q_packed, video_counts)
     k_pool = pool_compact_k64_key(key_video, video_counts)
-    probability = compute_draft_probability_tensors(q_pool, k_pool)
-    route = route_draft_spatial_cross_precision_tensors(
+    moments = diag_jensen
+    q_second = None
+    k_second = None
+    if moments:
+        denominator = video_counts.to(torch.float32).view(1, 1, video_blocks, 1)
+        q_second = (
+            q_packed.view(1, heads, video_blocks, _BLOCK, -1)
+            .float()
+            .square_()
+            .sum(dim=3)
+            .div_(denominator)
+            .to(torch.float16)
+            .contiguous()
+        )
+        k_second = (
+            key_video.view(1, heads, video_blocks, _BLOCK, -1)
+            .float()
+            .square_()
+            .sum(dim=3)
+            .div_(denominator)
+            .to(torch.float16)
+            .contiguous()
+        )
+    probability = draft_probability(
+        q_pool,
+        k_pool,
+        q_second=q_second,
+        k_second=k_second,
+    )
+    route = route_probability(
         probability,
+        layout.anchors,
+        anchor_count=layout.anchor_count,
+        prefix_blocks=prefix_blocks,
         sparsity_ratio=float(sparsity_ratio),
-        retained_low8_ratio=ratios[0],
-        retained_fp16_ratio=ratios[1],
-        frames=frames,
-        patches_h=math.ceil(height / tile_height),
-        patches_w=math.ceil(width / tile_width),
+        fp8_ratio=ratios[0],
+        fp16_ratio=ratios[1],
     )
     _warmup_sync("DraftMap routing", q_bshd.device)
 
@@ -250,12 +197,12 @@ def sm89_regular2d_h3_attention(
         device=q_bshd.device,
         dtype=torch.int32,
     )
-    ids[..., :video_blocks] = route.packed_ids + prefix_blocks
-    fp8_counts = route.low8_counts.contiguous()
+    ids[..., :video_blocks] = route.block_ids
+    fp8_counts = route.fp8_counts.contiguous()
     fp16_counts = (route.fp16_counts + prefix_blocks).contiguous()
 
-    del indices, slot_valid, prefix_counts, video_counts
-    del key_video, q_pool, k_pool, probability, route
+    del prefix_counts, video_counts
+    del key_video, q_pool, k_pool, q_second, k_second, probability, route
     video_output, _ = native_k64_mixed_attention(
         q_packed,
         key_fp16,
@@ -269,9 +216,9 @@ def sm89_regular2d_h3_attention(
     )
     _warmup_sync("mixed attention", q_bshd.device)
     del q_packed, key_fp16, value_fp16, valid_k, ids
-    output = assemble_h3_k64_output(prefix_output, video_output, inverse)
+    output = assemble_h3_k64_output(prefix_output, video_output, layout.inverse)
     _warmup_sync("output assembly", q_bshd.device)
     return output
 
 
-__all__ = ["sm89_regular2d_h3_attention"]
+__all__ = ["sm89_ragged_h3_attention"]

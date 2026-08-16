@@ -2,15 +2,15 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-candidate="${1:-mpa-sm89-regular2d-mixed}"
+candidate="${1:-mpa-ragged2d-mixed}"
 output_dir="${2:-${repo_root}/outputs/minimax-h3/${candidate}}"
 if [[ "$#" -ge 1 ]]; then shift; fi
 if [[ "$#" -ge 1 ]]; then shift; fi
 
 case "${candidate}" in
-  dense|official-sol|mpa-sm89-regular2d-mixed) ;;
+  dense|official-sol|mpa-ragged2d-mixed) ;;
   *)
-    echo "usage: $0 {dense|official-sol|mpa-sm89-regular2d-mixed} [OUTPUT_DIR] [runner args...]" >&2
+    echo "usage: $0 {dense|official-sol|mpa-ragged2d-mixed} [OUTPUT_DIR] [runner args...]" >&2
     exit 2
     ;;
 esac
@@ -89,8 +89,7 @@ if (( height_set != width_set )); then
   exit 2
 fi
 
-if [[ "${candidate}" == "mpa-sm89-regular2d-mixed" && "${single_process}" == "0" ]]; then
-  "${repo_root}/scripts/build_router_cuda.sh"
+if [[ "${candidate}" == "mpa-ragged2d-mixed" && "${single_process}" == "0" ]]; then
   "${repo_root}/scripts/build_attention_cuda.sh"
 fi
 
@@ -155,7 +154,7 @@ print(min(torch.cuda.get_device_properties(index).total_memory for index in rang
   fi
 fi
 
-if [[ "${candidate}" == "mpa-sm89-regular2d-mixed" ]]; then
+if [[ "${candidate}" == "mpa-ragged2d-mixed" ]]; then
   EVG_SELECTED_GPUS="${num_gpus}" "${python_bin}" -c '
 import os
 import torch

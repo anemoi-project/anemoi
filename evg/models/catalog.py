@@ -15,7 +15,7 @@ BUILTIN_MODEL_SPECS: tuple[ModelSpec, ...] = (
         status=SupportStatus.SUPPORTED,
         default_variant="fl2va-pruned-fp8",
         description=(
-            "EVG's current executable model mainline with adaptive 2-D DraftMap "
+            "EVG's current executable model mainline with ragged 2-D DraftMap "
             "routing and native SM89 FP8/FP16 mixed attention."
         ),
         sources=(

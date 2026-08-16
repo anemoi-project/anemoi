@@ -12,7 +12,7 @@ scripts/setup_conda_env.sh
 conda activate evg
 
 scripts/run_minimax_h3.sh \
-  mpa-sm89-regular2d-mixed \
+  mpa-ragged2d-mixed \
   outputs/minimax-h3/mpa
 ```
 
@@ -22,7 +22,7 @@ launcher:
 1. uses the active `evg` Conda environment (or `EVG_PYTHON` when supplied);
 2. downloads the pinned Diffusers source and required model files;
 3. verifies the compressed checkpoint size and SHA256;
-4. builds the SM89 router and attention extensions for MPA;
+4. builds the SM89 attention extension for MPA;
 5. chooses a valid Ulysses degree and runs denoise plus decode.
 
 The setup script selects a stack from the lowest driver version across visible
@@ -108,7 +108,6 @@ export MPA_PYTHON="$PWD/.venv/bin/python"
 export MPA_CUDA_HOME=/absolute/path/to/selected-conda-environment
 export MPA_BUILD_ROOT="${TMPDIR:-/tmp}/evg-mpa-build-${UID}"
 
-scripts/build_router_cuda.sh
 scripts/build_attention_cuda.sh
 ```
 
@@ -123,7 +122,7 @@ sparse attention path:
 
 ```bash
 EVG_NUM_GPUS=2 scripts/run_minimax_h3.sh \
-  mpa-sm89-regular2d-mixed \
+  mpa-ragged2d-mixed \
   /dev/shm/evg-h3-smoke \
   --steps 12 --no-decode
 ```
@@ -139,7 +138,7 @@ load-and-memory check, but it stays entirely inside the dense-first interval.
 Keep every runner argument identical:
 
 ```bash
-for candidate in dense official-sol mpa-sm89-regular2d-mixed; do
+for candidate in dense official-sol mpa-ragged2d-mixed; do
   scripts/run_minimax_h3.sh \
     "$candidate" \
     "outputs/minimax-h3/$candidate" \
@@ -167,7 +166,7 @@ The launcher detects `--decode-only` and runs it in one process:
 
 ```bash
 scripts/run_minimax_h3.sh \
-  mpa-sm89-regular2d-mixed \
+  mpa-ragged2d-mixed \
   /absolute/path/to/existing/output \
   --decode-only
 ```
@@ -175,44 +174,43 @@ scripts/run_minimax_h3.sh \
 ## MPA configuration
 
 The released policy is
-[`examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml`](../../../examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml),
+[`examples/minimax-h3/mpa-ragged2d-mixed.yaml`](../../../examples/minimax-h3/mpa-ragged2d-mixed.yaml),
 which the launcher loads by default. Reference it explicitly with:
 
 ```bash
 scripts/run_minimax_h3.sh \
-  mpa-sm89-regular2d-mixed \
+  mpa-ragged2d-mixed \
   outputs/minimax-h3/mpa \
-  --mpa-config examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml
+  --mpa-config examples/minimax-h3/mpa-ragged2d-mixed.yaml
 ```
 
 Copy the file before changing an experiment:
 
 ```bash
-cp examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml \
+cp examples/minimax-h3/mpa-ragged2d-mixed.yaml \
   /tmp/my-mpa-config.yaml
 
 scripts/run_minimax_h3.sh \
-  mpa-sm89-regular2d-mixed \
+  mpa-ragged2d-mixed \
   outputs/minimax-h3/mpa-custom \
   --mpa-config /tmp/my-mpa-config.yaml
 ```
 
 The YAML controls the base and per-layer sparsity, retained-block FP8/FP16
-split, dense-first steps/layers, and tile selection. Unknown fields and invalid
+split, route scoring, and dense-first steps/layers. Unknown fields and invalid
 ranges are rejected instead of being silently ignored.
 
 The fields have the following meanings:
 
 | Field | Meaning |
 | --- | --- |
-| `sparsity_ratio` | Fraction of routed video block pairs dropped in MPA layers that are not covered by `layer_sparsity_bands`. For example, `0.9` retains approximately 10% of the block pairs. The router rounds the retained count and always keeps at least one pair. |
-| `layer_sparsity_bands` | Per-layer overrides written as `[first, last, sparsity]`. Layer ranges are zero-based and half-open: `[18, 34, 0.85]` applies 85% sparsity to layers 18 through 33. Bands must be sorted, non-overlapping, and within the 50-layer transformer stack. Layers outside the bands use `sparsity_ratio`. |
+| `sparsity_ratio` | Fraction of routed video block pairs dropped in MPA layers that are not covered by `layer_sparsity_bands`. The released value `0.88` retains approximately 12% of the block pairs. The router rounds the retained count and always keeps at least one pair; on a very small grid it instead keeps the minimum number needed to cover all mandatory adjacency anchors. |
+| `layer_sparsity_bands` | Per-layer overrides written as `[first, last, sparsity]`. Layer ranges are zero-based and half-open: `[18, 34, 0.82]` applies 82% sparsity to layers 18 through 33. Bands must be sorted, non-overlapping, and within the 50-layer transformer stack. Layers outside the bands use `sparsity_ratio`. |
 | `fp8_ratio` | Target fraction of retained sparse block pairs assigned to the FP8 attention phase. |
-| `fp16_ratio` | Target fraction of retained sparse block pairs assigned to the FP16 rescue phase. It must be positive and sum to one with `fp8_ratio`. Mandatory spatial-cross anchors may be promoted from FP8 to FP16 without changing the total retained budget. |
+| `fp16_ratio` | Target fraction of retained sparse block pairs assigned to the FP16 rescue phase. It must be positive and sum to one with `fp8_ratio`. Mandatory ragged adjacency anchors are promoted from FP8 to FP16; only when they exceed the requested budget does retention rise to the minimum feasible anchor count. |
+| `diag_jensen` | Boolean switch for the optional diagonal-Jensen second-moment correction. `false` uses the fixed pooled-QK row-softmax probability score; `true` adds the correction. |
 | `dense_first_steps` | Number of initial denoising steps that use original-dtype dense SDPA for every transformer layer. The released value is 10. |
 | `dense_first_layers` | Number of leading transformer layers that remain dense at every denoising step. With value 2, zero-based layers 0 and 1 remain dense after the initial dense-only steps. |
-| `adaptive_tile` | When `true`, select a validated logical tile from 8x8, 8x7, and 7x8 according to the requested video shape. When `false`, use `tile_shape` directly. |
-| `tile_shape` | Fixed logical `[height, width]` tile used only when `adaptive_tile` is `false`. Both dimensions must be positive and their product cannot exceed the physical K64 capacity. |
 
 The dense guards take precedence over sparsity settings: a call selected by
 `dense_first_steps` or `dense_first_layers` does not enter the sparse FP8/FP16
@@ -227,7 +225,7 @@ positive ratios and they must sum to one:
 
 ```bash
 scripts/run_minimax_h3.sh \
-  mpa-sm89-regular2d-mixed \
+  mpa-ragged2d-mixed \
   outputs/minimax-h3/mpa-70-30 \
   --fp8-ratio 0.7 --fp16-ratio 0.3
 ```
