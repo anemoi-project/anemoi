@@ -52,7 +52,7 @@ DEFAULT_CHECKPOINT = Path(
     )
 )
 DEFAULT_CONDITIONING = PACKAGE_ROOT / "assets/official-example-1.pt"
-DEFAULT_MPA_CONFIG = REPO_ROOT / "examples/minimax-h3/mpa-sm89-regular2d-mixed.yaml"
+DEFAULT_MPA_CONFIG = REPO_ROOT / "examples/minimax-h3/mpa-ragged2d-mixed.yaml"
 PROMPT_SHA256 = (
     "98f36b879692095e099ae824c18d9e93e7006a490e082fd474a5f531769dcf06"
 )
@@ -61,36 +61,34 @@ PROMPTS = {
 }
 
 
-SM89_MAINLINE_CANDIDATE = "mpa-sm89-regular2d-mixed"
+MPA_MAINLINE_CANDIDATE = "mpa-ragged2d-mixed"
 _MPA_PROFILES: dict[str, dict[str, Any]] = {
-    SM89_MAINLINE_CANDIDATE: {
-        "adaptive_tile": True,
-        "tile_shape": (8, 8),
-        "video_sparsity_ratio": 0.90,
-        "layer_sparsity_bands": ((18, 34, 0.85), (34, 50, 0.65)),
-        "average_sparse_layer_sparsity_ratio": 0.80,
+    MPA_MAINLINE_CANDIDATE: {
+        "video_sparsity_ratio": 0.88,
+        "layer_sparsity_bands": ((18, 34, 0.82), (34, 50, 0.58)),
+        "average_sparse_layer_sparsity_ratio": 0.76,
         "precision": {"fp8": 0.8, "fp16": 0.2},
-        "route_score": (
+        "diag_jensen": False,
+        "route_note": (
             "pooled-QK row-softmax probability; exact per-head global top-k; "
-            "same-frame legal 2-D cross anchors consume the same budget"
+            "same-frame ragged adjacency anchors use the minimum feasible budget"
         ),
         "tile_note": (
-            "regular request-level selector: attention grid 24x42 -> 8x7; "
-            "24x40 -> 8x8; both execute through physical Q64xK64"
+            "stripe-compact exact cover at logical capacity 64; arbitrary "
+            "positive latent grids execute through physical Q64xK64"
         ),
         "skip_compensation": "disabled; unselected blocks are dropped",
     }
 }
-CANDIDATES = ("dense", "official-sol", SM89_MAINLINE_CANDIDATE)
+CANDIDATES = ("dense", "official-sol", MPA_MAINLINE_CANDIDATE)
 _MPA_CONFIG_KEYS = {
-    "adaptive_tile",
     "dense_first_layers",
     "dense_first_steps",
     "fp16_ratio",
     "fp8_ratio",
     "layer_sparsity_bands",
+    "diag_jensen",
     "sparsity_ratio",
-    "tile_shape",
 }
 
 
@@ -99,11 +97,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--candidate",
         choices=CANDIDATES,
-        default=SM89_MAINLINE_CANDIDATE,
+        default=MPA_MAINLINE_CANDIDATE,
         help=(
             "attention candidate; defaults to the current SM89 mainline: "
-            "regular adaptive 2-D pooling, probability-global routing, legal "
-            "2-D cross anchors, rising layer budget, FP8/FP16=80/20, and no "
+            "stripe-compact ragged 2-D pooling, probability-global routing, "
+            "ragged adjacency anchors, rising layer budget, FP8/FP16=80/20, and no "
             "skip compensation"
         ),
     )
@@ -212,20 +210,10 @@ def _apply_mpa_config(profile: dict[str, Any], config: dict[str, Any]) -> None:
     if int(profile.get("dense_first_layers", 2)) > 50:
         raise ValueError("dense_first_layers cannot exceed 50")
 
-    if "adaptive_tile" in config:
-        if type(config["adaptive_tile"]) is not bool:
-            raise TypeError("adaptive_tile must be a boolean")
-        profile["adaptive_tile"] = config["adaptive_tile"]
-    if "tile_shape" in config:
-        tile = config["tile_shape"]
-        if (
-            not isinstance(tile, list)
-            or len(tile) != 2
-            or any(type(value) is not int or value <= 0 for value in tile)
-            or math.prod(tile) > 64
-        ):
-            raise ValueError("tile_shape must contain two positive integers with area <= 64")
-        profile["tile_shape"] = tuple(tile)
+    if "diag_jensen" in config:
+        if type(config["diag_jensen"]) is not bool:
+            raise TypeError("diag_jensen must be a boolean")
+        profile["diag_jensen"] = config["diag_jensen"]
 
     if "layer_sparsity_bands" in config:
         bands = config["layer_sparsity_bands"]
@@ -543,8 +531,7 @@ def _make_mpa_attention(
             layer_sparsity_bands=tuple(
                 tuple(band) for band in candidate.get("layer_sparsity_bands", ())
             ),
-            adaptive_tile=bool(candidate.get("adaptive_tile", True)),
-            tile_shape=tuple(candidate.get("tile_shape", (8, 8))),
+            diag_jensen=candidate.get("diag_jensen", False),
             strict=True,
         )
     )
@@ -1040,7 +1027,7 @@ def main() -> int:
         args.fp8_ratio,
         args.fp16_ratio,
         _read_mpa_config(args.mpa_config)
-        if args.candidate == SM89_MAINLINE_CANDIDATE
+        if args.candidate == MPA_MAINLINE_CANDIDATE
         else None,
     )
     if args.print_config:
