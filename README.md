@@ -83,46 +83,60 @@ See [the reproduction guide](evg/models/minimax_h3/REPRODUCTION.md) for pinned r
 Each video is generated at 1344×768 resolution, with 239 frames at 24 FPS. Latency is tested on 4x4090 GPUs. **Only attention acceleration methods** are adopted during video generation. The five panels are ordered from left to right as
 follows:
 
-| Baseline | Sol-Attn | EVG | EVG | EVG |
-|:---:|:---:|:---:|:---:|:---:|
-| Dense | ~75% sparsity | 80% sparsity | 80% sparsity + 10% FP8 | 80% sparsity + 20% FP8 |
-| 425.93s | 346.85s (1.23x) | 343.83s (1.24x) | 338.63s (1.26x) | 335.54s (1.27x) |
+| Baseline | Sol-Attn | SpargeAttn | EVG | EVG | EVG |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| Dense | ~78% sparsity | 80% sparsity + 20% FP8 | 80% sparsity | 80% sparsity + 10% FP8 | 80% sparsity + 20% FP8 |
+| 425.52s | 355.02s (1.20x) | 347.24s (1.23x) | 336.77s (1.26x) | 333.51s (1.28x) | 328.26s (1.30x) |
 
-**Eagle in Flight**
+**Minimalist Product Advertisement**
 
-![Eagle in flight comparison](asserts/visualization/previews/eagle-in-flight.gif)
+![Minimalist product advertisement difference highlights](asserts/visualization/difference-highlights/01_极简产品广告.png)
 
-[Full-resolution MP4](asserts/visualization/鹰击长空.mp4)
-
-**Night Street Photography**
-
-![Night street photography comparison](asserts/visualization/previews/night-street-photography.gif)
-
-[Full-resolution MP4](asserts/visualization/夜街摄影.mp4)
-
-**Tea Ceremony**
-
-![Tea ceremony comparison](asserts/visualization/previews/tea-ceremony.gif)
-
-[Full-resolution MP4](asserts/visualization/茶道.mp4)
+[Full-resolution MP4](asserts/visualization/videos/01_极简产品广告_compare6.mp4)
 
 **3D Animated Short**
 
-![3D animated short comparison](asserts/visualization/previews/3d-animated-short.gif)
+![3D animated short difference highlights](asserts/visualization/difference-highlights/03_3D动画短片.png)
 
-[Full-resolution MP4](asserts/visualization/3D动画短片.mp4)
+[Full-resolution MP4](asserts/visualization/videos/03_3D动画短片_compare6.mp4)
 
 **Nature Documentary**
 
-![Nature documentary comparison](asserts/visualization/previews/nature-documentary.gif)
+![Nature documentary difference highlights](asserts/visualization/difference-highlights/05_自然纪录片.png)
 
-[Full-resolution MP4](asserts/visualization/自然纪录片.mp4)
+[Full-resolution MP4](asserts/visualization/videos/05_自然纪录片_compare6.mp4)
 
 **Macro Insect**
 
-![Macro insect comparison](asserts/visualization/previews/macro-insect.gif)
+![Macro insect difference highlights](asserts/visualization/difference-highlights/09_微距昆虫.png)
 
-[Full-resolution MP4](asserts/visualization/微距昆虫.mp4)
+[Full-resolution MP4](asserts/visualization/videos/09_微距昆虫_compare6.mp4)
+
+**Eagle in Flight**
+
+![Eagle in flight difference highlights](asserts/visualization/difference-highlights/15_鹰击长空.png)
+
+[Full-resolution MP4](asserts/visualization/videos/15_鹰击长空_compare6.mp4)
+
+**Tea Ceremony**
+
+![Tea ceremony difference highlights](asserts/visualization/difference-highlights/18_茶道.png)
+
+[Full-resolution MP4](asserts/visualization/videos/18_茶道_compare6.mp4)
+
+**City Time-Lapse**
+
+![City time-lapse difference highlights](asserts/visualization/difference-highlights/30_城市延时.png)
+
+[Full-resolution MP4](asserts/visualization/videos/30_城市延时_compare6.mp4)
+
+**Pottery Wheel**
+
+![Pottery wheel difference highlights](asserts/visualization/difference-highlights/37_陶轮.png)
+
+[Full-resolution MP4](asserts/visualization/videos/37_陶轮_compare6.mp4)
+
+More videos are available in [`asserts/visualization/videos/`](asserts/visualization/videos/).
 
 ## Repository Layout
 

@@ -1,0 +1,403 @@
+六方案对比 · 50 个 case 的 prompt 原文
+seed 全部为 0; 243 帧生成 -> 交付 239 帧 / 9.96s @24fps / 1344x768
+==============================================================================
+
+[01] 极简产品广告  (p01)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic, minimalist product commercial. A matte-black wireless earbud case rests dead center on a seamless off-white cyclorama, lit by one large soft key from the upper left that leaves a long, soft-edged shadow falling to the lower right. The background is a smooth gradient from warm white to pale grey with no props and no texture. The camera pushes in with small amplitude at slow speed as the lid lifts open on a slow, weighted hinge, revealing two earbuds seated in polished chrome cradles that catch a thin specular highlight. [Shot 2] At 00:04.500, the shot cuts to a tight macro of the right earbud lifting straight up out of its cradle and rotating slowly clockwise in mid-air, its brushed aluminium stem sliding through the key light so the highlight travels the full length of the body. [Shot 3] At 00:09.000, the shot cuts to a three-quarter view of the closed case resting on a thin brushed-steel plinth as the camera arcs right with small amplitude at slow speed, the shadow sweeping across the seamless floor behind it. Crisp white sans-serif type fades up in the empty space to the right, reading "Silence, engineered."
+
+overall_soundscape: A soft magnetic click as the lid releases, followed by the low, precise mechanical sweep of the hinge opening. A single clean detent snap as the earbud separates from its cradle, then the faint whisper of air as it rotates. Near-silent studio room tone throughout with no reverb tail.
+
+non_diegetic_music: Minimal electronic underscore at a slow tempo, one sustained warm synth pad with a single soft mallet note landing on each of the three visual beats, resolving to a held major chord at the end.
+
+[02] 纸拼贴解说  (p03)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Stop-motion paper-collage animation with visible halftone print texture, shot straight down on a deep navy paper background. A torn-edge circle of cyan halftone paper represents the ocean, its rough fibrous rim clearly visible. Cut-paper fish in coral and mustard slide across the surface in stepped increments, each held for two frames. The camera holds a static shot as a jagged grey shape of cut newsprint drifts in from the left and settles over the cyan, casting a hard paper shadow. [Shot 2] At 00:05.500, the camera pushes in with small amplitude at slow speed on the grey shape as it tears in half along a rough fibrous line, the two pieces sliding apart in jerky steps to reveal a bright yellow halftone circle beneath. [Shot 3] At 00:10.000, the shot cuts to a wider top-down view as dozens of small cut-paper fish stream back across the frame from both edges in staggered increments, and a torn white paper wave rolls across the bottom of the frame, its edge fluttering one segment at a time.
+
+overall_soundscape: Dry paper scrapes and short fibrous tears on every movement, the soft slap of cut shapes landing flat on the backing sheet, and the granular rasp of a torn edge separating. A close, dry room tone with no music-hall reverb.
+
+non_diegetic_music: None. The piece keeps only its tactile paper sound effects, with no background score.
+
+[03] 3D动画短片  (p05)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Stylized 3D CG animation with soft global illumination and shallow depth of field. A small rounded robot the height of a teacup, with a matte teal shell, one large glowing amber eye, and stubby articulated legs, stands at the edge of a moss-covered stone ledge in a misty forest at dawn. Volumetric light shafts cut through the canopy behind it. The camera pushes in with small amplitude at slow speed as the robot leans forward, its eye widening, and peers down over the drop. [Shot 2] At 00:05.000, the shot cuts to a low angle from below the ledge as the robot's legs scrabble on the wet moss, dislodging a pebble that tumbles past the camera. The robot flails, catches itself on a protruding root, and hangs there, its amber eye flickering rapidly. [Shot 3] At 00:10.000, the shot cuts to a wide shot as a large moth with pale luminous wings settles beside the robot's gripping claw. The robot freezes, then slowly extends one leg to touch the moth's wing. The moth lifts off, and the camera tilts up with medium amplitude at slow speed to follow it into the light shafts as the robot pulls itself back onto the ledge behind.
+
+overall_soundscape: A damp forest ambience of dripping water and distant birdsong under a low mist. Fine servo whirs and small mechanical clicks on every robot movement, the wet scrape of metal on moss, a pebble clattering down rock, and the soft dry flutter of large moth wings.
+
+non_diegetic_music: A delicate orchestral miniature at a slow tempo, solo celesta over sustained strings, tensing into a held tremolo as the robot slips and opening into a warm, hopeful woodwind phrase when the moth lifts off.
+
+[04] MV字幕风  (p07)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic music-video styling with heavy neon practicals and anamorphic flare. A young singer with cropped bleached hair, wearing an oversized translucent raincoat over a black tee, stands centred in a narrow alley slick with rain. Magenta and cyan signage saturates the wet asphalt. The camera pushes in with medium amplitude at slow speed as she lifts her chin and, with a breathy, close-mic timbre (S1), sings: <d>[English] I keep the city in my pocket.</d> Large condensed white lyric type appears across the lower third in time with her phrasing, then dissolves. [Shot 2] At 00:05.500, the shot cuts to a low angle behind her as she walks away from camera through standing water, the camera tracking her at a steady distance while lyric type scales up behind her head and pushes toward the lens. [Shot 3] At 00:10.500, the shot cuts to a tight profile close-up under a flickering magenta tube as she turns to camera and (S1) sings: <d>[English] And I never let it rain.</d> The lyric type shatters into individual letters that drift upward out of frame.
+
+overall_soundscape: Steady light rain on asphalt and dripping from fire escapes, the electrical buzz and intermittent tick of a failing neon tube, and wet footsteps splashing through standing water. Her close-mic vocal sits forward with a short room tail.
+
+non_diegetic_music: Synth-pop at a moderate tempo with a gated reverb drum machine, a warm analogue bassline, and shimmering arpeggiated pads that swell under each sung line and drop out entirely for a half-beat before the final phrase.
+
+[05] 自然纪录片  (p09)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic wildlife documentary with a long telephoto lens and compressed perspective. A snow leopard, its smoky grey coat marked with dark rosettes, lies motionless on a wind-scoured rock ledge high in a Himalayan cirque. Snow streams off the ridge behind it in thin ribbons. The camera holds a static shot on a long lens as the cat's pale green eyes track something below and its thick tail curls slowly over its paws. [Shot 2] At 00:05.000, the shot cuts to a wide establishing view of the cirque, the leopard now a small figure on the ledge, as the camera pans right with large amplitude at slow speed across a vast field of broken scree and blue shadow. [Shot 3] At 00:10.000, the shot cuts back to the telephoto as the leopard rises in one fluid motion, shakes loose snow from its shoulders in a bright spray, and pads forward along the ledge, disappearing behind a rock spur as the camera holds still.
+
+overall_soundscape: High-altitude wind moving in long gusts across bare rock, with fine spindrift hissing over stone. Faint claw scrapes on frozen grit as the cat shifts, a soft heavy shake of dense fur, and the muffled compression of paws in shallow snow. No birdsong, no insects.
+
+non_diegetic_music: Sparse orchestral score at a very slow tempo, sustained low strings under a distant solo cor anglais line, with a single soft timpani swell as the leopard rises.
+
+[06] 水下珊瑚礁  (p10)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic underwater photography with natural blue-green filtration and visible particulate in the water column. A wide shot of a shallow coral bommie in bright midday sun, its plate corals and branching staghorn glowing amber and violet, with shafts of dappled light rippling across the sand below. The camera pushes in with medium amplitude at slow speed through a loose cloud of blue-green anthias that part around the lens. [Shot 2] At 00:05.500, the shot cuts to a macro of a clownfish weaving between the pulsing tentacles of a magenta-tipped anemone, the tentacles bending and recovering with the surge. [Shot 3] At 00:10.000, the shot cuts to a low upward angle looking toward the surface as a green turtle glides diagonally across the frame, backlit into near silhouette, and the camera tilts up with medium amplitude at slow speed to follow it into the shimmering surface light.
+
+overall_soundscape: The muffled broadband hiss of moving water with a constant crackle of snapping shrimp across the reef. Low surge pulses swell and fade, a soft flutter of many small fish turning at once, and the slow deliberate sweep of large turtle flippers displacing water.
+
+non_diegetic_music: Ambient underscore at a very slow tempo, sustained glassy synth pads with a slow-attack bell motif, widening into a warm major chord as the turtle passes.
+
+[07] 夜街摄影  (p13)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic handheld street photography at night with anamorphic flare and heavy practical light. A narrow Shinjuku side street packed with stacked signage in red, white and electric blue, the wet pavement mirroring every sign. Pedestrians pass in both directions under umbrellas. The camera holds a loose handheld medium-wide shot as a ramen shop's noren curtain is pushed aside and a salaryman in a dark suit steps out into the rain, pausing to open a clear umbrella. [Shot 2] At 00:05.000, the camera trucks right with medium amplitude at slow speed following him from behind through the crowd, signage sliding through the frame and flaring across the lens. [Shot 3] At 00:10.000, the shot cuts to a low angle looking straight up the canyon of signs as rain falls through the beams toward the lens, and the camera tilts down with medium amplitude at slow speed to find him crossing an intersection into a wall of white headlights.
+
+overall_soundscape: Dense city rain on pavement, plastic umbrellas and awnings. Overlapping foot traffic, a cloth curtain brushing aside, muffled conversation and a burst of kitchen noise as a door opens, the electrical hum and tick of signage, and the wet hiss of car tyres crossing the intersection.
+
+non_diegetic_music: Downtempo electronic underscore at a slow tempo, a filtered sub bass with sparse dubby chords and a soft tape-delayed pluck that ducks under the loudest street moments.
+
+[08] 黏土定格  (p16)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Claymation stop-motion with visible thumbprints, sculpting tool marks and slight surface wobble on every model, animated on twos. A rotund clay chef with a bulbous nose, an oversized white toque and a mustard neckerchief stands behind a clay countertop in a cheerfully lopsided kitchen. The camera holds a static shot as he lifts a clay rolling pin high overhead and brings it down onto a pale slab of clay dough, which squashes and slowly rebounds. [Shot 2] At 00:05.000, the camera pushes in with small amplitude at slow speed as he presses a star cutter into the dough, peels the star free with an exaggerated pinch, and his eyebrows shoot up his forehead in a single snappy pose change. [Shot 3] At 00:09.500, the shot cuts to a wide shot as he turns to a clay oven whose door swings open with a stiff hinge, and a puff of cotton-wool steam pushes out in stepped increments. He recoils, his toque compressing and springing back. [Shot 4] At 00:13.000, the shot cuts to a close-up of a tray of golden clay stars, one of them wobbling upright and toppling over as the chef's clay hand reaches in.
+
+overall_soundscape: Soft dense thuds of clay meeting clay, a sticky peel as the cutter lifts free, and the stiff creak of a handmade hinge. A dry cotton puff for the steam, small comic pops on each snappy pose change, and a warm close room tone with no reverb.
+
+non_diegetic_music: Playful chamber score at a moderate tempo, staccato bassoon and pizzicato strings trading a bouncing melody, with a comic descending slide when the chef recoils.
+
+[09] 微距昆虫  (p19)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action extreme macro photography with a razor-thin plane of focus and a heavily blurred background. A dragonfly with an iridescent teal thorax and transparent veined wings grips a dew-beaded reed stem against a soft green bokeh field. The camera pushes in with very small amplitude at very slow speed as individual dew drops on the wing membrane catch the low morning sun and refract it. [Shot 2] At 00:05.500, the shot cuts to a tighter macro on the compound eye, its thousands of hexagonal facets resolving into a fine mosaic, the eye rotating slightly as the insect tracks something off-frame. [Shot 3] At 00:10.000, the shot cuts to a wider macro as the dragonfly's wings tense, release the stem and beat into a blur, the reed springing back and flinging dew drops through the frame as the camera tilts up with small amplitude at fast speed to follow.
+
+overall_soundscape: A quiet meadow morning with faint distant birdsong and a soft breeze moving through reeds. The fine dry rustle of a stem shifting, a papery high-frequency wing buzz building as the insect tenses, and a short burst of beating wings as it launches.
+
+non_diegetic_music: Delicate ambient score at a very slow tempo, sustained high strings with a sparse celesta motif, dropping out entirely at the launch and returning as a single soft chord.
+
+[10] 秋林鹿  (p21)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic nature photography with a long lens and heavy backlight. A red deer stag with a broad rack of antlers stands in a birch forest at dawn, low sun raking through the trunks and igniting the falling leaves into drifting sparks of amber. His breath plumes visibly in the cold. The camera holds a static shot on a long lens as he turns his head and his ear flicks. [Shot 2] At 00:05.000, the camera trucks left with medium amplitude at slow speed, birch trunks sliding through the foreground as parallax layers, revealing two hinds grazing in the mist behind him. [Shot 3] At 00:10.000, the shot cuts to a medium close-up as the stag lifts his head, opens his mouth and roars, the sound rolling away through the trees while his breath billows into the light. The hinds lift their heads together, and the camera holds still as leaves continue to fall through the beam.
+
+overall_soundscape: A still cold forest with distant crows and the fine dry patter of falling leaves settling on the forest floor. Hoof scuffs in leaf litter, a snort and a heavy breath cloud, and the deep resonant bellow of a rutting stag with a long natural decay through the trees.
+
+non_diegetic_music: Restrained orchestral score at a very slow tempo, low sustained strings with a distant French horn line answering the roar, resolving into a soft high string bed as the leaves fall.
+
+[11] 演出现场  (p24)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic concert cinematography with hard coloured stage lighting, atmospheric haze and lens flare. A drummer with sweat-soaked hair, wearing a sleeveless black shirt, sits behind a large kit on a riser, backlit by a bank of white strobes cutting through haze. The camera pushes in with medium amplitude at fast speed as the drummer drives into a fill, sticks blurring across the toms. [Shot 2] At 00:04.500, the shot cuts to an extreme close-up of a crash cymbal at the moment of impact, the bronze visibly flexing and rippling in slow motion as the stick rebounds. [Shot 3] At 00:08.500, the shot cuts to a wide shot from behind the kit looking out over the drummer's shoulder into a packed dark crowd lit by a sweeping magenta wash, thousands of raised hands moving in time. [Shot 4] At 00:12.500, the shot cuts back to a tight low angle as the drummer lands a final downbeat and holds both sticks aloft, the strobes cutting to black around him.
+
+overall_soundscape: A huge room ambience with crowd roar and clapping filling every gap. Tight snare cracks, deep resonant floor toms, the sustained shimmer and decay of a struck crash, the physical thump of a kick drum in a large space, and a swell of crowd noise on the final hit.
+
+non_diegetic_music: Hard-driving rock at a fast tempo with a distorted guitar riff and a prominent live drum kit, the arrangement stripping to drums alone for the cymbal close-up and returning at full width for the crowd shot.
+
+[12] 铁匠铺  (p28)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic low-key interior photography lit almost entirely by forge fire. A blacksmith with a leather apron over bare arms draws a glowing orange billet from the coals with long tongs, sparks lifting around him in a dark timber workshop. The camera pushes in with small amplitude at slow speed as he sets the billet on the anvil. [Shot 2] At 00:04.500, the shot cuts to an extreme close-up of the hammer striking the glowing steel, each blow throwing a bright spray of scale and sparks, the orange dimming a shade with every strike. [Shot 3] At 00:08.500, the shot cuts to a medium shot as he plunges the blade into a quench trough, releasing an enormous column of steam that fills the frame and momentarily whites out the fire light. [Shot 4] At 00:12.500, the shot cuts to a close-up of the finished blade held up in the firelight, the camera arcing left with small amplitude at slow speed so a bright line of reflected flame travels the full length of the edge.
+
+overall_soundscape: The deep continuous breath of a forge fire with an occasional pop of coal. Bright ringing hammer strikes on steel, each with a long metallic decay and a scatter of hot scale hitting the floor, a violent hiss and roar as the blade enters the quench, and the settling drip of water afterwards.
+
+non_diegetic_music: Percussive score at a moderate tempo built from struck metal and low taiko, locking to the hammer rhythm, cutting out entirely at the quench and returning as a single low sustained note under the final reveal.
+
+[13] 极光营地  (p31)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic astrophotography-style night footage with visible star field and low noise. A wide shot of a single illuminated dome tent on a snow field beneath an enormous green aurora that ripples in vertical curtains across the whole sky, reflected faintly on the snow. The camera holds a static shot as the curtains brighten, fold and sweep from left to right. [Shot 2] At 00:05.500, the shot cuts to a low angle beside the tent as a figure in a heavy parka steps out, breath clouding, and tilts their head back. The camera tilts up with large amplitude at slow speed from the figure to the corona directly overhead, where the aurora converges into a rippling crown. [Shot 3] At 00:11.000, the shot cuts to a wide static shot as the aurora surges to a deep magenta at its lower fringe, floods the snow with colour, then fades to a faint green band as the stars sharpen behind it.
+
+overall_soundscape: A profound arctic silence with a faint high wind moving over dry snow. The crunch of boots compressing cold snow, a nylon tent zip and fabric rustle, one long exhaled breath, and no other sound.
+
+non_diegetic_music: Expansive ambient score at a very slow tempo, layered choral pads with a slow-swelling sub bass, cresting on the magenta surge and receding into a single sustained high tone.
+
+[14] 海滩犬  (p33)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic action photography with a long lens, backlight and visible spray. A golden retriever sprints along a wet beach at sunset directly toward camera, sand and water exploding from under its paws, ears flying back, tongue out. The camera holds a static long-lens shot as the dog closes distance and fills the frame. [Shot 2] At 00:04.500, the shot cuts to a low tracking shot moving alongside the dog at the waterline, spray bursting sideways into the golden backlight in sheets, the horizon strobing behind. [Shot 3] At 00:09.000, the shot cuts to a slow-motion close-up as the dog leaps for a thrown ball, twisting mid-air, water beading and separating from its coat in individual drops that hang in the light. [Shot 4] At 00:13.000, the shot cuts to a wide static shot as the dog lands in shallow surf, shakes violently in a spinning halo of spray, and trots back toward a distant figure on the sand.
+
+overall_soundscape: Rolling surf and a steady coastal wind. Rapid wet paw impacts on packed sand, water sheeting and splashing sideways, excited panting close to the microphone, a soft grunt at the leap, and a dense flapping shake with spraying droplets.
+
+non_diegetic_music: Uplifting orchestral score at a moderate tempo, warm strings with a rising brass line and light percussion, thinning to strings alone during the slow-motion leap and returning full for the landing.
+
+[15] 鹰击长空  (p35)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic aerial wildlife photography with a long lens and crisp mountain air. A golden eagle soars along a sunlit ridge line, its primary feathers splayed and flexing individually against the airflow, a vast valley of blue shadow far below. The camera trucks right with large amplitude at medium speed, holding the bird in frame as terrain streams past behind it. [Shot 2] At 00:05.000, the shot cuts to a close profile as the eagle turns its head, the amber eye and hooked beak sharply resolved, then folds its wings and drops out of the bottom of frame. The camera tilts down with large amplitude at fast speed, arriving after the bird has gone. [Shot 3] At 00:09.500, the shot cuts to a following shot in the dive, the ground rushing up as the eagle plummets with wings swept back, then flares wide at the last moment and pulls level over a scree slope. [Shot 4] At 00:13.500, the shot cuts to an extreme wide static shot as the bird climbs away on a thermal, becoming a small dark cross against an immense rock face.
+
+overall_soundscape: High thin wind over rock with a faint valley echo. Air rushing over stiff feathers rising in pitch and volume through the dive, a sharp snap as the wings flare, and one piercing eagle call that echoes off the rock wall.
+
+non_diegetic_music: Cinematic orchestral score at a moderate tempo, sustained strings with a solo horn motif, accelerating into fast tremolo strings for the dive and opening into a wide brass chord as the bird climbs.
+
+[16] 赛博朋克巷  (p37)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic science-fiction styling with heavy atmospheric haze, volumetric practicals and anamorphic flares. A narrow alley in a dense future city, walls stacked with holographic advertising in cyan and hot pink, steam venting from grates at street level. A courier in a black technical jacket with reflective piping stands with her back to camera, hood up. The camera pushes in with medium amplitude at slow speed as a holographic koi swims through the air past her shoulder. [Shot 2] At 00:05.000, the shot cuts to a low angle as she turns, the light catching a fine mesh visor across her eyes, and she flicks two fingers upward. A translucent interface panel unfolds in the air beside her, its glyphs cascading. [Shot 3] At 00:09.500, the shot cuts to a tracking shot from the front as she walks toward camera through the steam, the interface collapsing behind her and the holographic koi dispersing into particles. [Shot 4] At 00:13.000, the shot cuts to a wide static shot as she exits the alley into a rain-soaked street where traffic streams past at two levels, the upper lane hanging in the air.
+
+overall_soundscape: A layered city drone with distant traffic at two heights and a constant low industrial hum. Pressurised steam bursts from street grates, the soft synthetic chimes and glassy sweeps of a holographic interface unfolding and collapsing, wet footsteps, and the doppler pass of overhead vehicles.
+
+non_diegetic_music: Dark synthwave at a moderate tempo, an arpeggiated bassline with icy pads and a filtered lead that opens up as she exits into the street.
+
+[17] 地铁第一视角  (p42)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic POV photography at head height with natural handheld movement and mixed fluorescent light. A POV shot descending a crowded subway staircase, commuters passing on both sides, tiled walls sliding by. The camera moves forward at walking pace with a natural vertical bounce, turning to follow a signage arrow. [Shot 2] At 00:05.000, the POV reaches the platform edge as a train arrives, its windows strobing past the eyeline and slowing to a stop. The camera holds still as the doors open and passengers stream out around the viewer. [Shot 3] At 00:09.500, the POV steps into the carriage and turns to face the doors as they close, then the camera tilts down with small amplitude at slow speed to a pair of hands holding a folded paper ticket, and back up as the train pulls into the dark tunnel and the window becomes a mirror.
+
+overall_soundscape: A reverberant tiled-station ambience with layered footsteps and indistinct crowd noise. The rising squeal and rush of an arriving train, a chime and pneumatic door hiss, a recorded platform announcement, the compressed roar of the tunnel, and rhythmic wheel clatter.
+
+non_diegetic_music: Understated electronic score at a moderate tempo, a muted pulse with soft filtered chords that stays well beneath the station sound and lifts slightly as the train enters the tunnel.
+
+[18] 茶道  (p44)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic interior photography with soft diffused shoji light and a restrained natural palette. A low symmetrical shot of a tatami room where a host in a muted indigo kimono kneels beside a black iron kettle, steam rising steadily. The camera holds a static shot as she lifts a bamboo ladle and pours a slow thread of hot water into a dark raku bowl. [Shot 2] At 00:05.500, the camera pushes in with small amplitude at slow speed to a macro of a bamboo whisk moving rapidly through bright green matcha, the surface rising into a fine even foam. [Shot 3] At 00:10.000, the shot cuts to a medium shot as she rotates the bowl twice with deliberate precision and sets it down on the tatami, then bows. With a quiet, measured voice (S1) she says: <d>[English] Please, take your time.</d> [Shot 4] At 00:13.500, the shot cuts to a close-up of the bowl on the mat, steam curling from the green surface, a single shaft of window light crossing it.
+
+overall_soundscape: A deep quiet interior with a faint garden ambience beyond paper screens. The low rolling hiss of an iron kettle near the boil, a thin pour of water into ceramic, the fast dry rattle of a bamboo whisk against the bowl wall, the soft grain of a bowl turning on tatami, and a single distant bird outside.
+
+non_diegetic_music: None. The piece keeps only its natural room sound.
+
+[19] 短跑慢镜  (p46)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic sports photography at very high frame rate with a long lens and hard stadium light. An extreme close-up of a sprinter's hands set on the starting blocks, fingers arched behind the line, the track surface texture sharply resolved. The camera holds a static shot as the fingers press and the tendons tighten. [Shot 2] At 00:04.000, the shot cuts to a low slow-motion side angle at the gun as the athlete drives out of the blocks, spikes biting into the track, muscle deforming visibly under the skin, blocks kicking backward. [Shot 3] At 00:08.500, the shot cuts to a tracking slow-motion shot alongside at full stride, sweat separating from the skin into individual airborne beads, the athlete's jaw slack with effort and the stadium lights strobing through behind. [Shot 4] At 00:13.000, the shot cuts to a head-on slow-motion shot of the line as the chest crosses it, the torso rotating, and the athlete's expression breaking open.
+
+overall_soundscape: A large stadium ambience with a low continuous crowd murmur that swells through the sequence. The metallic click of feet settling into blocks, a sharp starting pistol with a hard stadium slap-back, rhythmic spike strikes into the track, forced controlled breathing close to the microphone, and a crowd roar rising at the line.
+
+non_diegetic_music: Tense percussive score at a slow tempo, a low pulsing heartbeat rhythm under sustained strings, dropping to near silence at the gun and building to a single crashing orchestral hit at the line.
+
+[20] 梯田晨作  (p50)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic landscape photography with soft dawn light and layered atmospheric haze. An extreme wide shot of flooded rice terraces stepping down a steep valley, each level a mirror reflecting a pink and gold sky, mist pooling in the lower folds. The camera pedestals up with large amplitude at slow speed, revealing terrace after terrace receding into the haze. [Shot 2] At 00:06.000, the shot cuts to a medium shot of an elderly farmer in a conical straw hat and rolled trousers, standing calf-deep in a flooded paddy, bending to transplant seedlings in a steady rhythm, each movement sending fine ripples across the mirrored surface. [Shot 3] At 00:11.000, the shot cuts to a low macro at the water surface as a seedling is pressed into the mud and the reflection of the sunrise fractures into concentric rings, then settles back into a perfect mirror as a white egret lifts off in the background.
+
+overall_soundscape: A soft valley dawn with layered birdsong and distant flowing irrigation water. Gentle water sloshing around moving legs, the wet suck of mud releasing, the fine rustle of seedling bundles, a faint breeze through terrace grasses, and the slow heavy wingbeats of an egret taking off.
+
+non_diegetic_music: Gentle pastoral score at a very slow tempo, solo bamboo flute over sustained strings with a soft koto figure, opening into a warm full chord as the egret lifts.
+
+[21] 纸艺定格科普  (p02)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Stop-motion papercraft animation, shot straight down on a layered paper diorama. Three stacked planes of textured construction paper form a cross-section of soil: a top layer of green fibrous paper cut into grass blades, a middle layer of warm brown corrugated card, and a deep ochre base. A small paper seed folded from cream cardstock, with visible fold creases, sits on the surface. The camera holds a static shot as the seed splits open in jerky twelve-frames-per-second increments and a pale green paper shoot unfolds upward, one cut segment snapping into place at a time. Fingerprints and tiny paper fibres are visible on every surface under a warm tungsten desk lamp. [Shot 2] At 00:05.000, the camera tilts up with small amplitude at slow speed to follow the shoot as two rounded paper leaves flick open on either side of the stem, each leaf held a fraction of a second in an overshoot before settling. [Shot 3] At 00:10.500, the shot cuts to a low three-quarter angle as a cut-paper sun on a visible wooden skewer rises behind the diorama in stepped increments, its layered orange and yellow rays rotating, while a paper bee on a thin wire bobs into frame and hovers beside the leaves.
+
+overall_soundscape: Dry paper rustle and the fibrous crackle of card bending on every animation increment, punctuated by the soft tap of paper settling against paper. The faint creak of a wooden skewer turning, and a light papery flutter as the bee bobs. A quiet workshop room tone with no reverb.
+
+non_diegetic_music: A light, curious music-box melody at a moderate tempo over soft pizzicato strings, with a gentle rising figure as the leaves open and a warm resolving phrase when the sun appears.
+
+[22] 手绘发光×实拍融合  (p04)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action handheld phone footage blended with rough hand-drawn glowing animation, filmed in a small self-service laundromat at night. Warm fluorescent tubes overhead, a row of front-loading washers with round glass doors on the left, and a scuffed wooden bench in the centre foreground. A real hand rests palm-up on the bench. A rough, glowing coral-orange scribble creature the size of a plum, drawn in wobbling two-frames-per-second strokes, hops onto the open palm and presses down so the real fingers curl slightly around it. The camera holds handheld, breathing slightly. [Shot 2] At 00:04.000, the creature springs off the palm, stretching mid-air into a long glowing ribbon that keeps the same coral colour and the same tapering tail line, and shoots left past the washers. The camera pans left with large amplitude at fast speed, arriving late, catching only the tail of the ribbon already leaving the frame edge. [Shot 3] At 00:08.500, the shot cuts to the ribbon reforming into a round glowing coral bird perched on the rim of an open washer door, the tail line still visible as its plume. It flaps twice, stumbles on the wet rim, catches itself with an embarrassed little hop, and a single glowing coral dot detaches from its tail and drifts down, sticking to the lens. [Shot 4] At 00:12.000, the bird unfurls into a wide coral arc that sweeps across the whole ceiling, and the camera tilts up with large amplitude at slow speed, again arriving after the arc has already passed.
+
+overall_soundscape: The low continuous tumble and drum-rumble of a washing machine mid-cycle, a fluorescent ballast buzz, and the soft slap of a real palm closing. A light papery whoosh as the drawn creature launches, a tiny two-note chirp when it stumbles on the rim, and a soft airy sweep as the arc crosses the ceiling.
+
+non_diegetic_music: Warm lo-fi bedroom-pop loop at a relaxed tempo, muted electric guitar with tape wobble and a soft brushed-kick pulse, staying quiet under the room sound.
+
+[23] 品牌宣传片  (p06)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic, warm-toned brand film. A wide interior shot of a small coffee roastery at golden hour, sunlight raking through tall dusty windows onto a matte-black drum roaster. A roaster in her thirties, wearing a canvas apron over a grey henley, her sleeves pushed to the elbow, stands in profile at the machine. The camera trucks right with medium amplitude at slow speed as she pulls the trier rod from the drum and lets a cascade of glossy dark beans pour back into the hopper. [Shot 2] At 00:04.500, the shot cuts to a macro of beans tumbling in the cooling tray, steam curling off them in the raking light, a wooden paddle sweeping through the frame from the right. [Shot 3] At 00:08.500, the shot cuts to a medium close-up of the roaster lifting a white ceramic cup, her calm, low voice (S1) saying: <d>[English] Twelve minutes. That is the whole secret.</d> She tilts the cup and the surface catches the window light. [Shot 4] At 00:12.500, the shot cuts to a wide static shot of the shop front from outside as the evening light fades on the glass and the warm interior glow takes over.
+
+overall_soundscape: The steady low roar of a gas burner and the rhythmic tumble of beans in a rotating drum. A sharp metallic scrape as the trier rod pulls free, a bright cascade of beans falling into metal, the dry sweep of a wooden paddle, and the clean ceramic clink of a cup on a saucer. Faint street sound rises in the final shot.
+
+non_diegetic_music: Warm acoustic underscore at a moderate tempo, fingerpicked nylon guitar with brushed snare and a soft upright bass, thinning to a single sustained guitar note under the final exterior shot.
+
+[24] 双人合作游戏开场  (p08)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Stylized 3D CG game-menu animation with a clean modern UI overlay. A dark navy background with a subtle animated grid, split vertically into two player cards trimmed in amber and teal. On the left card stands a tall character in a heavy amber utility jacket with cropped dark hair; on the right, a shorter character in a teal hooded flight suit with long braided hair. Both are rendered in a crisp cel-lit style. The camera holds a static shot as both cards slide up into place from below with a firm ease-out, and a bold white menu title resolves at the top reading "CO-OP READY". [Shot 2] At 00:04.500, the camera pushes in with small amplitude at fast speed on the left card as its border pulses amber, a row of loadout icons flips in one by one, and a small READY stamp lands with a slight overshoot. [Shot 3] At 00:08.000, the shot cuts to a matching push on the right card as its teal border pulses and its own READY stamp lands. [Shot 4] At 00:11.000, the shot cuts to a wide view as both cards fold flat and sweep aside to reveal a stylized city skyline at dusk behind them, the camera pulling out with medium amplitude at slow speed as amber and teal light trails streak toward the horizon.
+
+overall_soundscape: Crisp synthetic UI sounds: a soft rising whoosh as each card slides up, discrete mechanical ticks as icons flip in, a firm layered thunk on each READY stamp, and a wide filtered sweep as the cards fold away. A low electronic room tone underpins the whole sequence.
+
+non_diegetic_music: Driving electronic score at a fast tempo, a pulsing saw bass with a four-on-the-floor kick, layering an octave-up synth lead at each card confirmation and hitting a full-width impact when the skyline is revealed.
+
+[25] 航拍冰川  (p11)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic aerial drone photography in flat overcast light. A high top-down shot of a braided glacial river delta in Iceland, its silt-grey channels branching across black volcanic sand in fractal patterns. The camera pedestals up with large amplitude at slow speed, the pattern widening and multiplying beneath. [Shot 2] At 00:05.000, the shot cuts to a low forward-flying shot skimming just above the surface of a glacier tongue, deep blue crevasses opening and closing beneath the camera as it advances at speed. [Shot 3] At 00:10.000, the shot cuts to a wide orbit as the camera arcs left with large amplitude at slow speed around a calving front, a slab of ice the size of a building shearing away and dropping into black water, throwing a slow ring of white spray.
+
+overall_soundscape: Steady high-altitude wind with no vegetation to soften it. A deep continuous rumble of meltwater moving under ice, sharp cracks and long groaning stress fractures from within the glacier, and a heavy delayed boom followed by surging water as the ice front calves.
+
+non_diegetic_music: Cinematic ambient score at a very slow tempo, sub-bass drone under sustained cello, building a slow crescendo of layered strings that peaks on the calving and cuts abruptly to a single held note.
+
+[26] 食物微距  (p12)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic food photography with a macro lens and very shallow depth of field. A dark ceramic bowl of tonkotsu ramen sits on a worn oak counter under a single warm overhead light. Thick white steam rises through the beam. The camera pushes in with small amplitude at slow speed on the surface of the broth as a ladle lifts and pours a stream of golden fat back into the bowl, sending concentric ripples outward. [Shot 2] At 00:05.000, the shot cuts to an extreme macro of a chashu slice being lowered into the broth with wooden tongs, its marbled fat glistening and slowly translucing at the edges as the hot liquid touches it. [Shot 3] At 00:09.500, the shot cuts to a top-down view as a soft-boiled egg is halved, the jammy orange yolk spreading slowly into the broth, and a hand scatters chopped scallion across the surface in a bright green arc. [Shot 4] At 00:13.000, the shot cuts to a side macro as chopsticks lift a tangle of wavy noodles clear of the bowl, broth streaming off them in fine threads.
+
+overall_soundscape: A low simmering bubble and the thick pour of hot broth from a metal ladle. The wet slide of pork against liquid, a soft knife press through egg white, the fine dry patter of scattered scallion, and the slick lift of noodles breaking the surface with dripping strands. A quiet kitchen room tone sits behind everything.
+
+non_diegetic_music: Warm minimal jazz at a slow tempo, brushed drums with a muted upright bass and sparse Rhodes chords, staying low in the mix so the food sounds dominate.
+
+[27] 2D动画  (p14)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] 2D-animated in a modern Japanese television anime style, with clean line art, flat cel shading and painted background art. A high-school girl with a short dark bob and a loose navy cardigan over a white blouse sits on a rooftop railing, legs dangling over the edge, against a wide painted sky of layered orange and violet clouds at sunset. Her hair and cardigan hem lift steadily in the wind, animated on twos. The camera holds a static shot as she tilts her head back and closes her eyes. [Shot 2] At 00:05.000, the camera pushes in with small amplitude at slow speed on her face as she opens her eyes, and with a soft, slightly hoarse voice (S1) she says: <d>[English] I think I will tell her tomorrow.</d> A single strand of hair crosses her cheek. [Shot 3] At 00:09.500, the shot cuts to a wide low angle behind her as she pushes off the railing and lands lightly on the roof deck, her skirt and cardigan settling a beat later. The camera tilts up with medium amplitude at slow speed past her to the sky, where a flock of small birds crosses the painted clouds in a looping cycle.
+
+overall_soundscape: A steady rooftop wind with the metallic hum and faint rattle of a chain-link fence. Fabric flapping in the gusts, the light scuff of school shoes landing on concrete, and distant town ambience far below with a faint train crossing.
+
+non_diegetic_music: Gentle piano-led ballad at a slow tempo, simple arpeggios over sustained strings, adding a soft high glockenspiel line as the camera rises to the sky.
+
+[28] 水彩风  (p15)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] 2D-animated in a loose watercolour style with visible paper grain, wet-edge bleeding and hand-painted textures, animated on threes. A small hillside village of ochre and slate rooftops sits under steady rain, the pigment of the roofs bleeding softly into the wet sky wash. The camera holds a static shot as rain streaks are painted in as short vertical strokes and puddles spread in irregular blooms across the cobbled square. [Shot 2] At 00:05.500, the camera trucks left with medium amplitude at slow speed past a bakery window where warm yellow light bleeds outward into the surrounding wash, and a figure under a red umbrella crosses the square in loose brushed silhouette. [Shot 3] At 00:10.500, the camera tilts up with medium amplitude at slow speed as the rain thins to a few strokes and a broad wash of pale gold spreads across the sky from the left, the wet edges of the clouds visibly blooming outward.
+
+overall_soundscape: Even rainfall on tile and stone, water running through a gutter and spilling from a downspout into a puddle. Muffled footsteps on wet cobbles, a small shop bell, and the softening of the rain into scattered drips as the sky clears.
+
+non_diegetic_music: Solo piano at a slow tempo with a warm room ambience, sparse and unhurried, joined by a single sustained cello line as the golden light spreads.
+
+[29] 复古胶片  (p17)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Vintage 8mm film look with heavy grain, gate weave, warm faded colour, occasional dust and a soft vignette. A wide handheld shot from the passenger seat of a station wagon travelling a straight desert highway, the dashboard and a sun-bleached arm resting on the open window frame in the lower foreground. Telephone poles tick past against a bleached sky. The camera holds handheld with a natural sway as the horizon shimmers with heat. [Shot 2] At 00:05.000, the shot cuts to a shaky handheld shot out the side window of a young woman in a headscarf and round sunglasses sitting on the car roof at a rest stop, laughing and shielding her eyes. A vertical scratch runs through the frame for a moment. [Shot 3] At 00:10.000, the shot cuts to a wide static shot of the wagon pulling away from a lone gas station, dust rising behind it, the image flaring white at the edges as the exposure shifts, then settling as the car shrinks toward the vanishing point.
+
+overall_soundscape: The steady drone of a tyre roar and open-window wind buffeting the microphone. A rhythmic tick of expansion joints in the road, distant laughter partly lost in the wind, a car door slamming with a metallic ring, and gravel crunching under tyres as the wagon pulls away.
+
+non_diegetic_music: Sun-bleached 1970s folk rock at a moderate tempo, jangling twelve-string guitar with a loose tambourine and a warm bass, mixed with a slight tape saturation and dropping to a single guitar figure in the final shot.
+
+[30] 城市延时  (p18)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic time-lapse photography with a locked-off camera and long exposures producing smooth motion trails. A wide view across a dense city skyline from a high vantage, shot from deep blue pre-dawn. The camera holds a static shot as the sky shifts through indigo to violet to orange, and clouds stream across the frame in accelerated bands while windows in the towers light up and extinguish in scattered patterns. [Shot 2] At 00:06.000, the shot cuts to a lower angle over a major intersection where headlight and tail-light trails paint continuous red and white ribbons through the frame, pooling and releasing at each signal cycle. [Shot 3] At 00:11.000, the shot cuts back to the skyline as full daylight arrives, shadows of the towers sweeping visibly across the streets below, and a bank of low cloud pours between the buildings like slow water.
+
+overall_soundscape: A distant, continuous city hum with no individual events resolvable, rising in density and pitch as the day begins. A faint wind across the high vantage point, and the layered wash of traffic swelling under the intersection shot.
+
+non_diegetic_music: Minimal electronic score at a moderate tempo, a repeating arpeggiated synth figure over a slow-moving pad, adding layers with each cut and resolving into a bright sustained chord at full daylight.
+
+[31] 沙漠驼队  (p20)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic wide-format desert photography in hard low sun. An extreme wide shot of a line of camels crossing a vast dune field at late afternoon, the animals reduced to small dark shapes on a razor-sharp ridge line, their shadows stretching enormously across the sand. The camera holds a static shot as wind lifts fine sand off the crest in a continuous smoking plume. [Shot 2] At 00:05.500, the shot cuts to a low ground-level angle as the caravan passes close to camera, camel feet compressing the sand a metre from the lens, tasselled saddle blankets in deep red and indigo swaying past. [Shot 3] At 00:10.500, the shot cuts to a high wide shot as the camera pedestals up with large amplitude at slow speed, the caravan shrinking into an immense field of sculpted dunes that runs to a hazy horizon.
+
+overall_soundscape: A steady dry desert wind carrying a fine hiss of moving sand. The soft compressive thud of broad camel feet in sand, creaking leather and the muffled clink of harness fittings, the flap of heavy woven blankets, and a low occasional camel grumble.
+
+non_diegetic_music: Sparse world-fusion score at a slow tempo, a bowed string drone under a solo ney flute, with a soft frame-drum pulse entering as the caravan passes and thinning out again on the final wide shot.
+
+[32] 工业机械臂  (p22)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic industrial cinematography with hard specular light and a cool steel palette. A wide shot inside a spotless automotive body shop where a row of orange six-axis robotic arms work in synchronised motion around a bare car body shell. Showers of white welding sparks fall in continuous curtains. The camera trucks right with large amplitude at medium speed down the line, arms sweeping through the frame in choreographed arcs. [Shot 2] At 00:05.500, the shot cuts to a tight low angle on a single weld tip as it touches the seam, throwing a violent burst of sparks directly toward the lens that bounce off the floor in bright arcs. [Shot 3] At 00:10.000, the shot cuts to a high top-down view as the completed shell rises on a lift and glides away down the line, the robot arms folding back to their home positions in unison and the sparks ceasing all at once, leaving only smoke drifting through the light beams.
+
+overall_soundscape: A continuous industrial ambience of ventilation and distant conveyor motion. Precise servo whines rising and falling with each arm sweep, the sharp electrical crackle and hiss of spot welding, sparks pattering on concrete, pneumatic releases, and a heavy hydraulic groan as the shell lifts.
+
+non_diegetic_music: Tense electronic score at a moderate tempo, a pulsing sequenced bass with metallic percussion hits locked to the arm movements, dropping to a single sustained drone as the line comes to rest.
+
+[33] 实验室反应  (p23)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic macro photography with clinical white light and a black background. A tall glass beaker sits centred on a matte black bench, filled with a clear liquid, condensation beading on its outer wall. The camera pushes in with small amplitude at slow speed as a single drop of deep indigo solution falls from a pipette and enters the surface, blooming into a slow expanding plume of colour with fine turbulent tendrils. [Shot 2] At 00:05.500, the shot cuts to an extreme macro at the boundary of the plume, where the indigo shears into ribbons and spirals in on itself, the fluid dynamics resolving into fine detail. [Shot 3] At 00:10.000, the shot cuts to a wider shot as the whole beaker saturates to a uniform deep blue, then a second reagent is added and the colour flashes abruptly to a luminous emerald from the bottom up, fine bubbles racing to the surface as the camera holds still.
+
+overall_soundscape: A quiet laboratory room tone with a faint fume-hood extraction hum. A single glassy click as the pipette touches the rim, one clean drop entering liquid, the fine dense fizz of bubbles rising, and a soft glass ring as the beaker is set down.
+
+non_diegetic_music: Curious minimal score at a slow tempo, muted marimba over a low sustained synth pad, holding a single suspended note through the plume and resolving brightly at the colour change.
+
+[34] 清晨面包房  (p25)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic interior photography in warm low key with a single practical light source. A baker in a flour-dusted apron, his forearms coated to the elbow, stands at a wooden bench in a dark bakery before dawn, lit by one warm bulb overhead. Flour hangs in the air, catching the light. The camera pushes in with small amplitude at slow speed as he folds a large sheet of laminated dough over itself and presses it flat with the heels of both hands. [Shot 2] At 00:05.000, the shot cuts to a macro as a knife slices a triangle of dough, the layers separating visibly at the cut edge, and his hands roll it into a croissant with three quick turns. [Shot 3] At 00:09.500, the shot cuts to an oven interior view through glass as a tray of croissants expands and browns, the layers visibly lifting and separating. [Shot 4] At 00:13.000, the shot cuts to a close-up as a finished croissant is torn in half, releasing a puff of steam and a shower of flakes, the honeycomb interior pulling apart in strands.
+
+overall_soundscape: A quiet pre-dawn interior with a low oven roar behind everything. The soft slap of dough on wood, a fine dusting of flour, a crisp knife through laminated layers, the metallic slide of a tray on oven racks, and a dry crackling tear with falling flakes.
+
+non_diegetic_music: Warm minimal piano at a slow tempo, single notes with a long decay over a soft sustained string bed, brightening slightly as the oven light comes up.
+
+[35] 雨天车窗  (p26)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic interior photography with shallow depth of field and cool desaturated grading. A close shot of a rain-covered train window from inside a moving carriage, individual drops racing sideways across the glass while a green countryside blurs past beyond. The camera holds a static shot as the focus rests on the water on the glass. [Shot 2] At 00:05.000, the focus pulls smoothly to a young man reflected in the window, in his twenties, wearing a dark wool coat with the collar up, headphones around his neck, watching the landscape. He blinks slowly. With a quiet, tired voice (S1) he says in an off-screen voiceover: <d>[English] Two more stops and none of this matters.</d> while his lips remain completely closed. [Shot 3] At 00:10.000, the shot cuts to a wider interior shot down the empty carriage as the train enters a tunnel and the windows go black, the interior lights becoming the only source, then bursts back into grey daylight as the camera holds still.
+
+overall_soundscape: The steady rhythmic clatter of wheels over rail joints under a continuous carriage rumble. Rain striking glass at an angle, a faint tinny leak of music from headphones, the pressure change and deepened roar entering the tunnel, and the sudden release as the train exits.
+
+non_diegetic_music: Ambient underscore at a slow tempo, a warm analogue pad with a slow filter sweep and a distant reverbed piano note recurring every few bars, swelling in the tunnel and thinning on the exit.
+
+[36] 风暴灯塔  (p27)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic seascape photography in stormy blue-grey light with heavy spray on the lens. A wide shot of a granite lighthouse on a rock outcrop as a huge swell detonates against its base, throwing white water two-thirds of the way up the tower. The camera holds a static shot as the spray column collapses and the next swell builds. [Shot 2] At 00:05.000, the shot cuts to a low angle on the gallery rail as the lamp above rotates, its beam sweeping through driving rain in a visible cone that passes over the camera and away. [Shot 3] At 00:09.500, the shot cuts to an interior shot at the lamp room window where a keeper in a heavy oilskin, his grey beard wet, presses a palm to the glass and watches the sea. With a low, weathered voice (S1) he says: <d>[English] She has stood through worse than this.</d> [Shot 4] At 00:13.000, the shot cuts to a wide exterior as the beam completes a full rotation into the camera, flaring the lens white before sweeping past into the dark.
+
+overall_soundscape: A sustained storm roar of wind and breaking sea, with individual heavy impacts as swells hit granite and long draining hisses as water falls back. Rain lashing glass, the slow mechanical grind of a rotating lamp mechanism, and the muffled interior calm behind thick windows during the keeper's line.
+
+non_diegetic_music: Dark orchestral score at a slow tempo, low brass swells and a churning string ostinato that recedes almost entirely under the interior line and returns at full force on the final sweep.
+
+[37] 陶轮  (p29)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic macro photography with soft north-facing window light and a muted earthen palette. A pair of wet clay-covered hands cups a spinning grey cylinder on a potter's wheel, water running down the walls in fine rivulets. The camera holds a static overhead-adjacent angle as the cylinder rises smoothly between the hands. [Shot 2] At 00:05.000, the camera pushes in with small amplitude at slow speed to a macro of the rim as the fingers press inward and the wall thins, spiral throwing lines resolving in the wet surface. [Shot 3] At 00:09.500, the shot cuts to a side profile as the potter belly out the form with a rib tool, the vessel widening into a rounded bowl, then the wheel slows and the form comes to rest. [Shot 4] At 00:13.000, the shot cuts to a wide shot of the finished bowl on the still wheel head, the camera tilting up with small amplitude at slow speed to reveal a shelf of drying pots behind it in the window light.
+
+overall_soundscape: The low continuous hum of an electric wheel with a faint belt whir. Wet clay squelching and slipping under moving hands, water dripping into a bucket, the fine scrape of a rib tool on a wet wall, and the wheel spinning down into silence.
+
+non_diegetic_music: Quiet ambient score at a very slow tempo, sustained cello with a distant harmonic drone, adding a single warm piano note as the bowl comes to rest.
+
+[38] 书法笔墨  (p30)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action extreme macro photography with a black background and a single hard raking light. The tip of a loaded calligraphy brush hovers over textured white paper, a bead of black ink swelling at its point. The camera holds a static shot as the bead trembles, releases and strikes the paper, blooming outward into the fibres in a slow irregular star. [Shot 2] At 00:05.000, the camera trucks right with medium amplitude at slow speed following the brush as it draws a single long stroke, the bristles splaying and recovering, dry-brush texture opening in the middle of the line and closing at the end with a sharp lifted tail. [Shot 3] At 00:10.000, the shot cuts to a top-down wide shot of the finished character on the sheet as the brush lifts away, and a small red seal is pressed firmly into the lower corner and peeled off, leaving a crisp vermilion mark.
+
+overall_soundscape: A near-silent studio with a very close, dry room tone. A single soft tick as the ink drop lands, the fine dry rasp of bristles dragging across textured paper, the faint sticky lift of the brush leaving the surface, and a firm press and peel as the seal is applied.
+
+non_diegetic_music: Sparse traditional score at a very slow tempo, a single guqin phrase with long silences between notes and a soft sustained wooden flute entering only at the seal.
+
+[39] 家猫阳光  (p32)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic domestic photography with warm natural light and shallow depth of field. A grey tabby cat lies stretched in a rectangle of afternoon sun on worn oak floorboards, dust motes drifting through the beam above it. The camera holds a static low shot at floor level as the cat's flank rises and falls and one ear rotates toward a sound. [Shot 2] At 00:05.000, the camera pushes in with small amplitude at slow speed on the face as the eyes open to slits, the vertical pupils contracting in the light, then the cat yawns hugely, curling its tongue. [Shot 3] At 00:09.500, the shot cuts to a side view as the cat rolls onto its back in one loose motion, paws folding over its chest, and bats lazily at a dust mote passing through the beam. [Shot 4] At 00:13.000, the shot cuts to a wider shot as the sun rectangle has visibly shifted along the floor and the cat shuffles sideways to stay inside it without opening its eyes.
+
+overall_soundscape: A very quiet domestic interior with a distant clock tick and faint traffic beyond closed windows. A soft rumbling purr rising and falling, the light scuff of fur on wood, a small chirrup during the yawn, and a barely audible claw tap on floorboards.
+
+non_diegetic_music: Gentle solo piano at a very slow tempo, unhurried single notes with plenty of space between them and a soft sustained string pad entering in the final shot.
+
+[40] 马群  (p34)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic wide-format photography with a long lens, heavy dust and hard low sun. A herd of wild horses gallops across an open steppe at golden hour, a rolling wall of dust rising behind them and igniting in the backlight. The camera trucks right with large amplitude at fast speed, holding the herd broadside as the ground blurs beneath. [Shot 2] At 00:05.000, the shot cuts to a low ground-level angle as hooves thunder past a metre from the lens, clods of turf flying over the camera. [Shot 3] At 00:09.500, the shot cuts to a slow-motion medium shot of a single pale grey stallion at the head of the herd, mane and tail streaming, muscles working visibly under the coat, dust suspended in the light around him. [Shot 4] At 00:13.000, the shot cuts to an extreme wide shot as the herd crests a low ridge and drops out of sight, leaving only a slowly settling curtain of gold dust.
+
+overall_soundscape: A dense rolling thunder of many hooves on dry ground with individual impacts resolving as the herd passes close. Heavy blowing breath and occasional whinnies, clods striking the ground, and a steady grassland wind that carries the dust after the herd has gone.
+
+non_diegetic_music: Sweeping orchestral score at a fast tempo, driving low strings with a soaring French horn theme and a galloping timpani pattern, pulling back to sustained strings for the slow-motion shot and resolving on a broad final chord.
+
+[41] 抽象流体  (p36)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] 3D CG abstract motion graphics with physically based rendering, on a pure black background. A viscous chrome liquid sphere hovers centred, its mirror surface reflecting an unseen studio environment as slow ripples cross it. The camera arcs left with medium amplitude at slow speed as the sphere begins to deform, a single tendril reaching outward. [Shot 2] At 00:05.000, the sphere collapses inward and re-forms as a slowly rotating torus of the same chrome material, the surface tension visibly pulling the shape smooth. The camera pushes in with medium amplitude at slow speed until the torus fills the frame and its reflections resolve into abstract bands of light. [Shot 3] At 00:10.000, the shot cuts to a wide shot as the torus shatters into hundreds of individual chrome droplets that scatter outward, decelerate, then reverse and rush back together, merging into a single perfect sphere that settles with one last ripple.
+
+overall_soundscape: A deep sub-bass drone with no room reflections. Fine metallic shimmer as ripples cross the surface, a low viscous swell during deformation, a scattered glassy patter as droplets separate, and a single deep resonant impact as they re-merge.
+
+non_diegetic_music: Minimal electronic score at a slow tempo, a granular pad with slowly shifting harmonics and a low pulsing sub, building tension through the scatter and releasing on the merge.
+
+[42] 中世纪集市  (p38)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic period drama photography with soft overcast light, practical torches and a muted earth palette. A crowded medieval market square with timber-framed buildings, canvas awnings, hanging game and stacked barrels. The camera trucks right with large amplitude at slow speed through the crowd at head height, passing a fishmonger slapping a fish onto a board, a child weaving between legs, and a cooper hammering an iron hoop. [Shot 2] At 00:06.000, the shot cuts to a medium close-up of a baker's wife in a linen coif and rust-coloured wool dress handing a loaf across her stall. With a bright, carrying voice (S1) she calls: <d>[English] Fresh this morning, and the last of it.</d> [Shot 3] At 00:10.500, the shot cuts to a high wide shot from a balcony overlooking the whole square as smoke from cooking fires drifts across the crowd and a cart drawn by an ox pushes slowly through the press of people.
+
+overall_soundscape: A dense crowd murmur with overlapping shouted trade calls in the middle distance. A wet slap of fish on wood, rhythmic hammering on iron, chickens, a dog barking, cart wheels grinding over cobbles, and the low complaint of an ox under the general noise.
+
+non_diegetic_music: Period-flavoured acoustic score at a moderate tempo, hurdy-gurdy drone with a recorder melody and a light frame drum, receding under the dialogue and returning for the wide shot.
+
+[43] 火箭发射  (p39)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic long-lens documentary photography at dusk. A wide shot of a white orbital rocket on its pad against a deep indigo sky, floodlit from below, venting white vapour from its flanks. The camera holds a static long-lens shot as the vapour thickens and the launch clamps release. [Shot 2] At 00:04.000, ignition floods the frame with hard orange light as the engines light and an enormous cloud of steam and exhaust erupts sideways from the flame trench. The camera tilts up with large amplitude at medium speed, following the vehicle as it clears the tower and accelerates. [Shot 3] At 00:08.500, the shot cuts to a tighter tracking shot high in the atmosphere where the rocket punches through a thin cloud layer, dragging a spiralling vortex behind it, the exhaust plume expanding into a wide bell as the air thins. [Shot 4] At 00:13.000, the shot cuts to a wide static shot of the ground crew silhouetted against the receding light, the rocket now a single brilliant point climbing into a darkening sky.
+
+overall_soundscape: A tense quiet with venting hisses and distant pad announcements. Ignition arrives as a delayed, enormous low-frequency roar that builds into a crackling tearing thunder, rolling and echoing across open ground, then thinning to a distant rumble as the vehicle climbs away, leaving wind and faint radio chatter.
+
+non_diegetic_music: Cinematic orchestral score at a slow tempo, a low sustained brass swell under a ticking string ostinato, erupting into full orchestra at ignition and resolving to solo strings under the final shot.
+
+[44] 火山熔岩  (p40)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic documentary photography at night with extreme dynamic range. A wide shot of a fissure eruption where a curtain of molten fountains throws incandescent orange rock forty metres into the black sky, silhouetting jagged foreground rock. The camera holds a static shot as the fountains pulse in irregular surges. [Shot 2] At 00:05.000, the shot cuts to a close telephoto of a lava river moving through a channel, its bright orange surface skinning over into dark crust that tears open again into glowing cracks. [Shot 3] At 00:09.500, the shot cuts to a macro of the flow front advancing over cold ground, pushing a crumbling wall of glowing blocks that tumble and clink forward, igniting moss into brief bright flares. [Shot 4] At 00:13.500, the shot cuts to a high wide shot as the camera pedestals up with large amplitude at slow speed, revealing the full length of the glowing river winding to the sea, where a white steam plume boils upward.
+
+overall_soundscape: A continuous deep roar of escaping gas with rhythmic percussive booms from each fountain surge. The brittle glassy clink and tumble of cooling crust breaking, sharp crackles as vegetation ignites, and a distant sustained hiss where lava meets seawater.
+
+non_diegetic_music: Dark ambient score at a very slow tempo, a deep sub drone with distorted metallic textures and a slow-building low choir that opens out on the final aerial reveal.
+
+[45] 古籍图书馆  (p41)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic interior photography with warm raking window light and heavy visible dust. A wide symmetrical shot down the central aisle of a vaulted historic library, floor-to-ceiling shelves of leather-bound volumes receding on both sides, sunbeams cutting diagonally through the space. The camera pushes in with large amplitude at slow speed down the aisle, dust swirling in the beams. [Shot 2] At 00:06.000, the shot cuts to a macro of a hand in white cotton gloves easing a heavy volume from a shelf, releasing a small cloud of dust that ignites in the light. [Shot 3] At 00:10.000, the shot cuts to a top-down close-up of the book opening on a reading table, the pages fanning and settling, revealing a hand-illuminated plate in gold leaf and lapis blue that catches the raking light. The camera holds still as a single dust mote drifts across the gold.
+
+overall_soundscape: A deep, absorbent silence with a faint high room tone. Distant muffled footsteps on stone, the dry slide of a heavy book leaving a shelf, a soft leather creak as the cover opens, and the delicate crisp rustle of individual vellum pages settling.
+
+non_diegetic_music: Sparse solo harp at a very slow tempo with long pauses, joined by a single sustained low string note as the illuminated page is revealed.
+
+[46] 滑板公园  (p43)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic sports photography with a wide lens close to the ground and warm dusk backlight. A skateboarder in a faded orange tee and cuffed jeans drops into a concrete bowl, the camera low at the coping as the board and wheels rush past centimetres from the lens. The camera pans right with large amplitude at fast speed to follow the line across the bowl. [Shot 2] At 00:04.500, the shot cuts to a slow-motion low angle at the far lip as the skater launches into a frontside air, board gripped, silhouetted against a sky of orange and deep blue, dust and grit suspended around the wheels. [Shot 3] At 00:09.000, the shot cuts to a tracking shot alongside as the skater lands, compresses, and carves a long arc across the flat, the concrete texture streaking beneath. [Shot 4] At 00:13.000, the shot cuts to a wide static shot as the skater rolls to a stop, flips the board up into a waiting hand, and the park lights flicker on behind.
+
+overall_soundscape: A hard concrete ambience with long slap-back reflections. The continuous grinding roar of urethane wheels on rough concrete rising and falling with the line, a sharp pop of the tail, the scrape of trucks on coping, a heavy landing thud, and the clatter of a board flipped up and caught.
+
+non_diegetic_music: Lo-fi hip-hop at a moderate tempo, a dusty drum break with a warm filtered bass and a looped guitar sample, dropping to a filtered version during the slow-motion air and returning at the landing.
+
+[47] 冬夜木屋  (p45)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic interior photography in warm low key, lit almost entirely by firelight. A close shot of a wood stove with its door open, flames working through split birch logs, the light flickering across a rough timber floor. The camera holds a static shot as a log settles and a burst of sparks lifts into the flue. [Shot 2] At 00:05.000, the camera pulls out with medium amplitude at slow speed to reveal a wide cabin interior where an elderly man in a heavy knit sweater sits in a worn armchair, a wool blanket across his knees and an old dog asleep at his feet. Frost patterns cover the window behind him. [Shot 3] At 00:09.500, the shot cuts to a close-up of his hands turning the pages of a well-worn book, firelight moving across the paper, then setting it down on the arm of the chair. [Shot 4] At 00:13.000, the shot cuts to an exterior wide static shot of the cabin from outside in deep blue snow-light, one warm window glowing, snow falling steadily and smoke rising straight from the chimney.
+
+overall_soundscape: A dense crackling fire with occasional sharp pops and the hollow draw of a flue. A wooden chair creaking, slow deep dog breathing, dry paper pages turning, and in the exterior shot a muffled outdoor silence with falling snow and a very faint wind.
+
+non_diegetic_music: Warm acoustic score at a very slow tempo, fingerpicked steel-string guitar with a soft cello underneath, thinning to a single sustained cello note over the exterior shot.
+
+[48] 粗野主义建筑  (p47)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic architectural photography with hard directional sun and a cool concrete palette. A wide symmetrical low-angle shot of a brutalist concrete library, its board-marked facade stepping outward in heavy cantilevers against a cloudless sky. The camera pedestals up with medium amplitude at slow speed, the cantilevers passing overhead one after another. [Shot 2] At 00:05.500, the shot cuts to an interior wide shot of a triple-height atrium where a shaft of sun cuts diagonally across raw concrete and lands on a red carpeted stair, a single figure ascending. The camera holds a static shot. [Shot 3] At 00:10.000, the shot cuts to a macro of the board-marked concrete surface, individual timber grain impressions and aggregate resolving in the raking light, and the camera trucks right with small amplitude at slow speed along the wall until it reaches a sharp shadow edge and the frame falls into darkness.
+
+overall_soundscape: An exterior wind moving around hard concrete edges with distant traffic. Inside, a long reverberant room tone with footsteps on stone returning multiple reflections, a distant door closing, and the faint hum of building services. The final macro is almost silent with only a close air tone.
+
+non_diegetic_music: Minimal modern-classical score at a slow tempo, a repeating piano cell over sustained low strings, thinning to a single held note as the frame falls into shadow.
+
+[49] 维多利亚时代剧  (p48)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic period drama photography with candlelit low key, soft halation and a muted palette. A woman in her thirties, wearing a high-collared charcoal mourning dress with jet buttons, her dark hair pinned tightly, sits at a writing desk in a shuttered parlour. A single candle and an oil lamp light the room. The camera pushes in with small amplitude at slow speed as she breaks a red wax seal on a letter with her thumb. [Shot 2] At 00:05.000, the shot cuts to a macro of the letter as her eyes track the copperplate script, the paper trembling very slightly in her hand. [Shot 3] At 00:09.000, the shot cuts to a medium close-up as she lowers the letter, looks toward the shuttered window and, with a controlled, low voice (S1), says: <d>[English] Then he is not coming back at all.</d> A tear forms but does not fall. [Shot 4] At 00:13.000, the shot cuts to a wide static shot as she holds the letter's corner into the candle flame and watches it curl and blacken in the dish.
+
+overall_soundscape: A heavy, absorbent interior with a ticking mantel clock and rain against shuttered glass. The dry crack of a wax seal breaking, stiff paper unfolding and trembling, a fabric rustle as she shifts, a controlled unsteady breath, and the soft rush of paper catching flame.
+
+non_diegetic_music: Restrained chamber score at a very slow tempo, solo violin over sparse piano, falling silent entirely under the spoken line and returning with a single sustained low note as the letter burns.
+
+[50] 玻璃吹制  (p49)
+------------------------------------------------------------------------------
+integrated_multimodal_description: [Shot 1] Live-action, cinematic workshop photography in low key, lit by furnace glow. A glassblower in protective sleeves withdraws a blowpipe from a furnace mouth, a blob of incandescent orange glass glowing at its end, the heat visibly distorting the air. The camera pushes in with small amplitude at slow speed as he begins to rotate the pipe steadily. [Shot 2] At 00:05.000, the shot cuts to a close-up as he blows into the pipe and the glass inflates smoothly into a glowing bubble, its surface tension pulling it perfectly round while the colour fades from orange toward yellow. [Shot 3] At 00:09.500, the shot cuts to a side view as he shapes the neck with wet wooden jacks, steam bursting from the contact point, then swings the pipe in a wide arc to stretch the form. [Shot 4] At 00:13.500, the shot cuts to a macro of the finished vessel resting in an annealing oven, its walls shifting from deep amber to clear as it cools, faint stress patterns crossing the surface.
+
+overall_soundscape: A continuous furnace roar with a metallic resonance from the chamber. The rolling scrape of a steel pipe on a marver rail, a soft sustained breath through the pipe, a sharp hiss and steam burst as wet wood meets hot glass, and the low whoosh of a swung pipe cutting air.
+
+non_diegetic_music: Contemplative ambient score at a slow tempo, sustained analogue pads with a distant bell motif, brightening as the glass cools to clarity.
