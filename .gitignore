@@ -17,3 +17,5 @@ checkpoints/
 !asserts/*.mp4
 *.safetensors
 *.ckpt
+
+!asserts/visualization/videos/*.mp4
