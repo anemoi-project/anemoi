@@ -1,17 +1,17 @@
-# EVG Project
+# Anemoi Project
 
-Efficient Visual Generation (EVG) is an inference-only, training-free framework for high-performance visual generation, with a special focus on video generation.
-Unlike existing approaches that operate primarily on flattened 1D token sequences for attention design, EVG reasons over spatially structured 2D visual regions ([Draft Attention](https://arxiv.org/pdf/2505.14708)) to identify redundancy and adaptively route attention computation.
+Anemoi is a high-performance serving framework for transformer-based video generation models.
+Unlike existing approaches that operate primarily on flattened 1D token sequences for attention design, Anemoi reasons over spatially structured 2D visual regions ([Draft Attention](https://arxiv.org/pdf/2505.14708)) to identify redundancy and adaptively route attention computation.
 
-Currently, EVG supports stripe-compact ragged 2-D routing and native SM89 FP8/FP16 Mixed-Precision Attention (MPA) for attention acceleration. The executable model family now is MiniMax-H3 on 4090 GPU.
+Currently, Anemoi supports stripe-compact ragged 2-D routing and native SM89 FP8/FP16 Mixed-Precision Attention (MPA) for attention acceleration. The executable model family now is MiniMax-H3 on 4090 GPU.
 
 ## Installation
 
-Linux, an NVIDIA GPU, and a CUDA toolkit containing `nvcc` are required for the native MiniMax-H3 MPA path. We recommend Conda for environment management. The setup script creates (or updates) an environment named `evg`, installs the pinned MiniMax-H3 runtime dependencies, EVG itself, and the development tools:
+Linux, an NVIDIA GPU, and a CUDA toolkit containing `nvcc` are required for the native MiniMax-H3 MPA path. We recommend Conda for environment management. The setup script creates (or updates) an environment named `anemoi`, installs the pinned MiniMax-H3 runtime dependencies, Anemoi itself, and the development tools:
 
 ```bash
 scripts/setup_conda_env.sh
-conda activate evg
+conda activate anemoi
 ```
 
 It detects the lowest NVIDIA driver version across the visible GPUs and picks a matching CUDA/PyTorch stack. Preview the selection without changing the environment with `scripts/setup_conda_env.sh --dry-run`.
@@ -26,7 +26,7 @@ python -m unittest discover -s tests
 
 ## MiniMax-H3 Quick Start
 
-After activating the `evg` environment, the launcher downloads only the required model components and compressed DiT, builds the native MPA extensions, selects a valid number of visible GPUs, and generates the demo video:
+After activating the `anemoi` environment, the launcher downloads only the required model components and compressed DiT, builds the native MPA extensions, selects a valid number of visible GPUs, and generates the demo video:
 
 ```bash
 scripts/run_minimax_h3.sh
@@ -46,7 +46,7 @@ Requirements:
 The native MPA candidate requires SM89 GPUs such as RTX 4090. The launcher is not fixed to four GPUs: it automatically chooses the largest supported Ulysses degree from the visible devices. On one or two GPUs with less than 32 GiB each, it also selects the 832x480 demo profile to avoid running out of memory; four 24 GiB GPUs keep the validated 1344x768 profile. Explicit `--height` and `--width` values override this choice. Override the process count when needed:
 
 ```bash
-EVG_NUM_GPUS=2 scripts/run_minimax_h3.sh
+ANEMOI_NUM_GPUS=2 scripts/run_minimax_h3.sh
 ```
 
 MiniMax-H3 has 56 attention heads, so the selected GPU count must divide 56. Memory headroom and performance still depend on the selected hardware.
@@ -77,14 +77,14 @@ The configuration controls sparsity, the FP8/FP16 split, the optional
 diagonal-Jensen correction, and the
 dense-first schedule without requiring Python source changes.
 
-See [the reproduction guide](evg/models/minimax_h3/REPRODUCTION.md) for pinned resource revisions, manual setup, smoke tests, output contracts, and resource overrides.
+See [the reproduction guide](anemoi/models/minimax_h3/REPRODUCTION.md) for pinned resource revisions, manual setup, smoke tests, output contracts, and resource overrides.
 
 ## Visualization Examples
 
 Each video is generated at 1344×768 resolution, with 239 frames at 24 FPS. Latency is tested on 4x4090 GPUs. **Only attention acceleration methods** are adopted during video generation. The five panels are ordered from left to right as
 follows:
 
-| Baseline | Sol-Attn | SpargeAttn | EVG | EVG | EVG |
+| Baseline | Sol-Attn | SpargeAttn | Anemoi | Anemoi | Anemoi |
 |:---:|:---:|:---:|:---:|:---:|:---:|
 | Dense | ~78% sparsity | 80% sparsity + 20% FP8 | 80% sparsity | 80% sparsity + 10% FP8 | 80% sparsity + 20% FP8 |
 | 425.52s | 355.02s (1.20x) | 347.24s (1.23x) | 336.77s (1.26x) | 333.51s (1.28x) | 328.26s (1.30x) |
@@ -141,9 +141,9 @@ More videos are available in [`asserts/visualization/videos/`](asserts/visualiza
 
 ## Repository Layout
 
-- `evg/models/minimax_h3/`: model adapter, runner, resource downloader, and
+- `anemoi/models/minimax_h3/`: model adapter, runner, resource downloader, and
   package-local Sol runtime
-- `evg/layers/attention/mpa/`: reusable MPA routing and SM89 backend
+- `anemoi/layers/attention/mpa/`: reusable MPA routing and SM89 backend
 - `csrc/`: native mixed-attention CUDA sources
 - `scripts/run_minimax_h3.sh`: download-to-video entry point
 - `scripts/build_*_cuda.sh`: standalone native-extension builds
