@@ -3,13 +3,13 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "evg"
+name = "anemoi"
 version = "0.0.1"
 description = "Efficient Visual Generation inference engine"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-authors = [{ name = "EVG Project" }]
+authors = [{ name = "Anemoi Project" }]
 classifiers = ["License :: OSI Approved :: Apache Software License"]
 dependencies = []
 
@@ -51,13 +51,13 @@ dev = [
 ]
 
 [project.scripts]
-evg = "evg.cli.main:main"
+anemoi = "anemoi.cli.main:main"
 
 [tool.setuptools.packages.find]
-include = ["evg*"]
+include = ["anemoi*"]
 
 [tool.setuptools.package-data]
-"evg.models.minimax_h3" = ["assets/*.pt", "configs/*.json"]
+"anemoi.models.minimax_h3" = ["assets/*.pt", "configs/*.json"]
 
 [tool.ruff]
 line-length = 100

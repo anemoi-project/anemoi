@@ -1,9 +1,11 @@
 # Anemoi Project
 
-Anemoi is a high-performance serving framework for transformer-based video generation models.
+Anemoi is an inference-only, training-free framework for high-performance visual generation, with a special focus on video generation.
 Unlike existing approaches that operate primarily on flattened 1D token sequences for attention design, Anemoi reasons over spatially structured 2D visual regions ([Draft Attention](https://arxiv.org/pdf/2505.14708)) to identify redundancy and adaptively route attention computation.
 
-Currently, Anemoi supports stripe-compact ragged 2-D routing and native SM89 FP8/FP16 Mixed-Precision Attention (MPA) for attention acceleration. The executable model family now is MiniMax-H3 on 4090 GPU.
+Currently, Anemoi supports stripe-compact ragged 2-D routing and native
+Mixed-Precision Attention (MPA) on SM89 and SM120. The executable model family
+is MiniMax-H3 on RTX 4090 and RTX 5090 GPUs.
 
 ## Installation
 
@@ -43,7 +45,13 @@ Requirements:
 - Conda (recommended), or Python 3.12 with `venv` support
 - network access to GitHub and Hugging Face on the first run
 
-The native MPA candidate requires SM89 GPUs such as RTX 4090. The launcher is not fixed to four GPUs: it automatically chooses the largest supported Ulysses degree from the visible devices. On one or two GPUs with less than 32 GiB each, it also selects the 832x480 demo profile to avoid running out of memory; four 24 GiB GPUs keep the validated 1344x768 profile. Explicit `--height` and `--width` values override this choice. Override the process count when needed:
+The native MPA candidate requires a homogeneous set of SM89 GPUs such as RTX
+4090 or SM120 GPUs such as RTX 5090. The launcher is not fixed to four GPUs: it
+automatically chooses the largest supported Ulysses degree from the visible
+devices. On one or two GPUs with less than 32 GiB each, it also selects the
+832x480 demo profile to avoid running out of memory; four 24 GiB GPUs keep the
+validated 1344x768 profile. Explicit `--height` and `--width` values override
+this choice. Override the process count when needed:
 
 ```bash
 ANEMOI_NUM_GPUS=2 scripts/run_minimax_h3.sh
@@ -61,10 +69,17 @@ scripts/run_minimax_h3.sh mpa-ragged2d-mixed outputs/minimax-h3/mpa
 
 Dense is the quality baseline; the state-of-the-art method [Sol-Attn](https://github.com/NVlabs/Sana/tree/sol-engine) is introduced as a reference implementation. All three paths use the same checkpoint, conditioning, model fusions, Ulysses degree, seed, scheduler, and decoder.
 
-The released MPA policy is stored in
-[`examples/minimax-h3/mpa-ragged2d-mixed.yaml`](examples/minimax-h3/mpa-ragged2d-mixed.yaml).
-It is loaded by default. Pass a YAML path with `--mpa-config` to select an
-explicit or edited configuration:
+The launcher selects the production policy for the detected GPU architecture:
+
+- SM89 uses Q64 FP8/FP16 from
+  [`examples/minimax-h3/mpa-ragged2d-mixed.yaml`](examples/minimax-h3/mpa-ragged2d-mixed.yaml);
+- SM120 uses Q64 pure INT8, including INT8 prefix-query attention, from
+  [`examples/minimax-h3/mpa-sm120-q64-int8.yaml`](examples/minimax-h3/mpa-sm120-q64-int8.yaml).
+
+Both defaults enable same-frame adjacency anchors. Missing anchors replace the
+weakest retained edge in the lowest active precision, so they consume the
+fixed route budget instead of expanding it. Pass `--mpa-config` only to select
+an explicit or edited configuration:
 
 ```bash
 scripts/run_minimax_h3.sh \
@@ -73,9 +88,18 @@ scripts/run_minimax_h3.sh \
   --mpa-config examples/minimax-h3/mpa-ragged2d-mixed.yaml
 ```
 
-The configuration controls sparsity, the FP8/FP16 split, the optional
-diagonal-Jensen correction, and the
-dense-first schedule without requiring Python source changes.
+For example, the SM120 default can be stated explicitly as:
+
+```bash
+scripts/run_minimax_h3.sh \
+  mpa-ragged2d-mixed \
+  outputs/minimax-h3/mpa-sm120-q64 \
+  --mpa-config examples/minimax-h3/mpa-sm120-q64-int8.yaml
+```
+
+The configuration controls query geometry, sparsity, precision phases,
+optional route corrections, and the dense-first schedule without requiring
+Python source changes.
 
 See [the reproduction guide](anemoi/models/minimax_h3/REPRODUCTION.md) for pinned resource revisions, manual setup, smoke tests, output contracts, and resource overrides.
 
@@ -143,7 +167,7 @@ More videos are available in [`asserts/visualization/videos/`](asserts/visualiza
 
 - `anemoi/models/minimax_h3/`: model adapter, runner, resource downloader, and
   package-local Sol runtime
-- `anemoi/layers/attention/mpa/`: reusable MPA routing and SM89 backend
+- `anemoi/layers/attention/mpa/`: reusable MPA routing and SM89/SM120 backends
 - `csrc/`: native mixed-attention CUDA sources
 - `scripts/run_minimax_h3.sh`: download-to-video entry point
 - `scripts/build_*_cuda.sh`: standalone native-extension builds

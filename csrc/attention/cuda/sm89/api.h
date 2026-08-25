@@ -41,6 +41,50 @@ std::tuple<torch::Tensor, torch::Tensor> k64_mixed_attention_forward(
     int64_t fp16_prefix_blocks,
     double softmax_scale);
 
+std::tuple<torch::Tensor, torch::Tensor> q128_k64_mixed_attention_forward(
+    torch::Tensor q8,
+    torch::Tensor k8,
+    torch::Tensor v8,
+    torch::Tensor q16,
+    torch::Tensor k16,
+    torch::Tensor v16,
+    torch::Tensor fp8_block_ids,
+    torch::Tensor fp8_block_counts,
+    torch::Tensor fp16_block_ids,
+    torch::Tensor fp16_block_counts,
+    torch::Tensor q_scale,
+    torch::Tensor k_scale,
+    torch::Tensor v_scale,
+    torch::Tensor valid_k_counts,
+    int64_t fp16_prefix_blocks,
+    double softmax_scale);
+
+// Audit-only pure low-precision entry for isolating the inherited
+// Sparge/Sage wait_group<1> pipeline on the same absolute Q64xK64 route.
+std::tuple<torch::Tensor, torch::Tensor> k64_fp8_attention_forward(
+    torch::Tensor q8,
+    torch::Tensor k8,
+    torch::Tensor v8,
+    torch::Tensor block_ids,
+    torch::Tensor block_counts,
+    torch::Tensor q_scale,
+    torch::Tensor k_scale,
+    torch::Tensor v_scale,
+    torch::Tensor valid_k_counts,
+    double softmax_scale);
+
+std::tuple<torch::Tensor, torch::Tensor> q128_k64_fp8_attention_forward(
+    torch::Tensor q8,
+    torch::Tensor k8,
+    torch::Tensor v8,
+    torch::Tensor block_ids,
+    torch::Tensor block_counts,
+    torch::Tensor q_scale,
+    torch::Tensor k_scale,
+    torch::Tensor v_scale,
+    torch::Tensor valid_k_counts,
+    double softmax_scale);
+
 // Integration-private adaptive-2D preparation.  A cached logical-to-physical
 // token map drives one fused BF16/FP16 -> FP16 Q/K/V pack into K64 blocks;
 // invalid physical lanes are written as exact positive zero.
@@ -307,7 +351,7 @@ packed_raster_mixed_attention_forward(
     bool has_fp8,
     bool has_fp16);
 
-// Final EVG-facing output assembly.  The video partition arrives in the
+// Final Anemoi-facing output assembly.  The video partition arrives in the
 // native attention ABI's contiguous BHSD layout while both dense partitions
 // use contiguous BSHD.  The two visual key partitions are normalized with
 // their FP32 natural-log LSE states, then the text partition is copied and an

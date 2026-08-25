@@ -1,6 +1,6 @@
-# EVG Architecture
+# Anemoi Architecture
 
-EVG is an inference-only engine for visual generation. The first target is
+Anemoi is an inference-only engine for visual generation. The first target is
 video generation, especially long-sequence video generation. Training,
 fine-tuning, and dataset pipelines are intentionally outside the core project.
 
@@ -9,7 +9,7 @@ fine-tuning, and dataset pipelines are intentionally outside the core project.
 ```text
 client or CLI
   -> serve/API layer
-  -> EVGEngine
+  -> AnemoiEngine
   -> scheduler
   -> worker
   -> model runner
@@ -20,7 +20,7 @@ client or CLI
 ## Package Layout
 
 ```text
-evg/
+anemoi/
   cli/             command line tools
   config/          engine, precision, and attention configuration
   engine/          public engine entrypoint
@@ -46,7 +46,7 @@ tests/            unit and smoke tests
 
 Model support enters through adapters or small integration patches. Draft
 Attention, sparsity scheduling, future mixed precision, cache, and request
-scheduling remain EVG-owned features rather than model-local implementations.
+scheduling remain Anemoi-owned features rather than model-local implementations.
 
 ## Draft Attention Backend
 
@@ -66,6 +66,6 @@ policy types reserve the future FP8/FP4 boundary but are not active yet.
 ## Support Levels
 
 - `metadata-only`: model is listed, but no adapter exists.
-- `adapter-scaffolded`: EVG knows the model family, variants, tasks, and runtime.
+- `adapter-scaffolded`: Anemoi knows the model family, variants, tasks, and runtime.
 - `experimental`: an adapter can run a smoke generation path.
 - `supported`: tested path with documented commands, benchmarks, and CI coverage.

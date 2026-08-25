@@ -1,0 +1,360 @@
+"""Small runtime support shared by the three MiniMax-H3 demo candidates."""
+
+from __future__ import annotations
+
+import gc
+import json
+import math
+import os
+from pathlib import Path
+import time
+from typing import Any
+
+import torch
+
+
+def delivery_contract(num_frames: int) -> tuple[int, float]:
+    if not isinstance(num_frames, int) or isinstance(num_frames, bool):
+        raise TypeError("num_frames must be an integer")
+    if not 120 <= num_frames <= 360 or (num_frames - 5) % 17:
+        raise ValueError("num_frames must be in [120, 360] and satisfy 17n + 5")
+    delivered_frames = num_frames - 4
+    return delivered_frames, delivered_frames / 24.0
+
+
+def _model_root() -> Path:
+    value = os.environ.get("H3_MODEL_ROOT")
+    if not value:
+        raise RuntimeError("H3_MODEL_ROOT is not configured")
+    return Path(value)
+
+
+def _load_local_components(pipe, names: list[str]) -> None:
+    """Load selected modular components strictly from the prepared model tree."""
+
+    model_root = _model_root().resolve()
+    missing = [str(model_root / name) for name in names if not (model_root / name).is_dir()]
+    if missing:
+        raise FileNotFoundError(f"local model components are missing: {missing}")
+    pipe.load_components(
+        names=names,
+        pretrained_model_name_or_path=str(model_root),
+        local_files_only=True,
+    )
+    unloaded = [name for name in names if getattr(pipe, name, None) is None]
+    if unloaded:
+        raise RuntimeError(f"failed to load local model components: {unloaded}")
+
+
+class OffloadTransferTimer:
+    """CUDA-event spans around Diffusers group onload/offload operations."""
+
+    def __init__(self, module: torch.nn.Module):
+        groups: list[Any] = []
+        seen: set[int] = set()
+        for child in module.modules():
+            registry = getattr(child, "_diffusers_hook", None)
+            for hook in getattr(registry, "hooks", {}).values():
+                group = getattr(hook, "group", None)
+                if (
+                    group is not None
+                    and id(group) not in seen
+                    and callable(getattr(group, "onload_", None))
+                    and callable(getattr(group, "offload_", None))
+                ):
+                    seen.add(id(group))
+                    groups.append(group)
+        self.groups = groups
+        self.spans: list[tuple[torch.cuda.Event, torch.cuda.Event]] = []
+        self.originals: list[tuple[Any, str, Any]] = []
+
+    def install(self) -> None:
+        spans = self.spans
+        for group in self.groups:
+            for name in ("onload_", "offload_"):
+                original = getattr(group, name)
+
+                def wrapped(*args, _original=original, **kwargs):
+                    start = torch.cuda.Event(enable_timing=True)
+                    end = torch.cuda.Event(enable_timing=True)
+                    start.record()
+                    result = _original(*args, **kwargs)
+                    end.record()
+                    spans.append((start, end))
+                    return result
+
+                self.originals.append((group, name, original))
+                setattr(group, name, wrapped)
+
+    def remove(self) -> None:
+        for group, name, original in reversed(self.originals):
+            setattr(group, name, original)
+        self.originals.clear()
+
+    def mark(self) -> int:
+        return len(self.spans)
+
+    def samples_ms(self) -> list[float]:
+        torch.cuda.synchronize()
+        return [float(start.elapsed_time(end)) for start, end in self.spans]
+
+
+class EvalTimer:
+    """CUDA-event timing for every transformer evaluation."""
+
+    def __init__(
+        self,
+        module: torch.nn.Module,
+        *,
+        excluded: OffloadTransferTimer | None = None,
+    ):
+        self.module = module
+        self.original = module.forward
+        self.spans: list[tuple[torch.cuda.Event, torch.cuda.Event]] = []
+        self.excluded = excluded
+        self.excluded_ranges: list[tuple[int, int]] = []
+
+    def install(self) -> None:
+        original = self.original
+        spans = self.spans
+        excluded = self.excluded
+        excluded_ranges = self.excluded_ranges
+
+        def wrapped(*args, **kwargs):
+            excluded_start = excluded.mark() if excluded is not None else 0
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            start.record()
+            output = original(*args, **kwargs)
+            end.record()
+            spans.append((start, end))
+            excluded_ranges.append(
+                (excluded_start, excluded.mark() if excluded is not None else 0)
+            )
+            return output
+
+        self.module.forward = wrapped
+
+    def remove(self) -> None:
+        self.module.forward = self.original
+
+    def resident_samples_ms(self) -> list[float]:
+        torch.cuda.synchronize()
+        return [float(start.elapsed_time(end)) for start, end in self.spans]
+
+    def excluded_samples_ms(self) -> list[float]:
+        if self.excluded is None:
+            return [0.0] * len(self.spans)
+        excluded = self.excluded.samples_ms()
+        return [sum(excluded[start:end]) for start, end in self.excluded_ranges]
+
+    def samples_ms(self) -> list[float]:
+        return [
+            max(0.0, resident - excluded)
+            for resident, excluded in zip(
+                self.resident_samples_ms(), self.excluded_samples_ms()
+            )
+        ]
+
+
+def install_streamed_weight_only_fp8() -> dict[str, Any]:
+    """Retain weight-only FP8 matrices and materialize BF16 per linear call."""
+
+    import fp8_linear
+
+    cls = fp8_linear.Fp8Linear
+    if getattr(cls, "_mpa_streamed_weight_only_installed", False):
+        return {"installed": True, "already_installed": True}
+    original_init = cls.__init__
+    original_forward = cls.forward
+
+    def init(
+        self,
+        weight,
+        weight_scale,
+        input_scale,
+        bias,
+        compute_dtype=torch.bfloat16,
+        quantizer="eager",
+    ):
+        if input_scale is not None:
+            original_init(
+                self,
+                weight,
+                weight_scale,
+                input_scale,
+                bias,
+                compute_dtype,
+                quantizer,
+            )
+            self._mpa_streamed_weight_only = False
+            return
+        torch.nn.Module.__init__(self)
+        self.compute_dtype = compute_dtype
+        self.quantized_activations = False
+        self._quantize = fp8_linear.QUANTIZERS[quantizer]
+        self.register_buffer("weight", weight, persistent=False)
+        self.register_buffer(
+            "weight_scale", weight_scale.to(compute_dtype), persistent=False
+        )
+        self.input_scale = None
+        self.register_buffer(
+            "bias", None if bias is None else bias.to(compute_dtype), persistent=False
+        )
+        self._mpa_streamed_weight_only = True
+
+    def forward(self, x):
+        if not getattr(self, "_mpa_streamed_weight_only", False):
+            return original_forward(self, x)
+        weight = self.weight.to(self.compute_dtype) * self.weight_scale
+        return torch.nn.functional.linear(x.to(self.compute_dtype), weight, self.bias)
+
+    cls.__init__ = init
+    cls.forward = forward
+    cls._mpa_streamed_weight_only_installed = True
+    return {
+        "installed": True,
+        "already_installed": False,
+        "semantics": "same BF16 cast and scale multiply as eager dequantization",
+        "residency": "FP8 weights stay on CUDA; temporary BF16 is per call",
+    }
+
+
+def build_denoise_pipe(transformer: torch.nn.Module):
+    from diffusers.modular_pipelines.minimax_h3.modular_blocks_minimax_h3 import (
+        MiniMaxH3Blocks,
+    )
+
+    blocks = MiniMaxH3Blocks()
+    for name in ("text_encoder", "vae_encoder", "decode"):
+        blocks.sub_blocks.pop(name)
+    pipe = blocks.init_pipeline(_model_root())
+    pipe.update_components(transformer=transformer)
+    _load_local_components(pipe, ["scheduler", "audio_scheduler"])
+    pipe.set_progress_bar_config(disable=False)
+    return pipe
+
+
+def run_inputs(
+    prompt_embeds: torch.Tensor,
+    text_token_tags: torch.Tensor,
+    args,
+) -> dict[str, Any]:
+    return {
+        "prompt_embeds": prompt_embeds.to("cuda", dtype=torch.bfloat16),
+        "text_token_tags": text_token_tags,
+        "height": args.height,
+        "width": args.width,
+        "num_frames": args.num_frames,
+        "num_inference_steps": args.steps,
+        "generator": torch.Generator().manual_seed(args.seed),
+    }
+
+
+def _probe_video(path: Path) -> dict[str, Any]:
+    import av
+
+    with av.open(str(path)) as container:
+        stream = container.streams.video[0]
+        frames = sum(1 for _ in container.decode(video=0))
+        return {
+            "frames": frames,
+            "fps": float(stream.average_rate),
+            "width": stream.width,
+            "height": stream.height,
+            "audio_streams": len(container.streams.audio),
+        }
+
+
+def decode_and_export(
+    latent_artifacts: dict[str, dict[str, Any]],
+    results: dict[str, Any],
+    output_dir: Path,
+    _quality_baseline: str,
+) -> None:
+    """Decode a single candidate; cross-candidate metrics use compare_outputs."""
+
+    from diffusers.modular_pipelines.minimax_h3.modular_blocks_minimax_h3 import (
+        MiniMaxH3DecodeStep,
+    )
+    from diffusers.utils.export_utils import encode_video
+
+    if len(latent_artifacts) != 1:
+        raise ValueError("the compact demo decoder accepts one candidate per process")
+    decode_pipe = MiniMaxH3DecodeStep().init_pipeline(_model_root())
+    _load_local_components(decode_pipe, ["vae", "audio_vae"])
+    decode_pipe.vae.to("cuda")
+    decode_pipe.audio_vae.to("cuda")
+    torch.cuda.synchronize()
+    resident_mib = torch.cuda.memory_allocated() / 2**20
+
+    name, artifact = next(iter(latent_artifacts.items()))
+    torch.cuda.reset_peak_memory_stats()
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    torch.cuda.synchronize()
+    wall0 = time.perf_counter()
+    start.record()
+    state = decode_pipe(
+        latents=artifact["latents"].to("cuda"),
+        audio_latents=artifact["audio_latents"].to("cuda"),
+        num_condition_video_rows=artifact["num_condition_video_rows"],
+        num_condition_audio_rows=artifact["num_condition_audio_rows"],
+        num_latent_frames=artifact["num_latent_frames"],
+        latent_height=artifact["latent_height"],
+        latent_width=artifact["latent_width"],
+        num_audio_latents=artifact["num_audio_latents"],
+        output_type="pil",
+    )
+    end.record()
+    torch.cuda.synchronize()
+    delivered_frames, duration_s = delivery_contract(int(artifact["num_frames"]))
+    frames = state.videos[0][:delivered_frames]
+    audio = state.audio[0].detach().cpu()
+    sampling_rate = int(state.sampling_rate)
+    trimmed_audio = audio[..., : round(duration_s * sampling_rate)]
+    duration_label = f"{duration_s:.2f}".rstrip("0").rstrip(".")
+    video_path = output_dir / (
+        f"{name}_{artifact['width']}x{artifact['height']}_{duration_label}s_24fps.mp4"
+    )
+    encode0 = time.perf_counter()
+    encode_video(
+        frames,
+        fps=24,
+        output_path=str(video_path),
+        audio=trimmed_audio,
+        audio_sample_rate=sampling_rate,
+    )
+    probe = _probe_video(video_path)
+    if (
+        probe["frames"] != delivered_frames
+        or not math.isclose(probe["fps"], 24.0)
+        or (probe["width"], probe["height"])
+        != (artifact["width"], artifact["height"])
+    ):
+        raise RuntimeError(f"encoded media failed its contract: {probe}")
+    results["candidates"][name]["decode"] = {
+        "resident_mib": round(resident_mib, 1),
+        "gpu_s": round(start.elapsed_time(end) / 1000.0, 6),
+        "wall_s": round(time.perf_counter() - wall0, 6),
+        "peak_allocated_mib": round(torch.cuda.max_memory_allocated() / 2**20, 1),
+        "encode_wall_s": round(time.perf_counter() - encode0, 6),
+        "output": str(video_path),
+        "delivered_frames": len(frames),
+        "duration_s": duration_s,
+        "audio_sampling_rate": sampling_rate,
+        "media_probe": probe,
+    }
+    (output_dir / "benchmark.json").write_text(
+        json.dumps(results, indent=2, allow_nan=True) + "\n"
+    )
+    del state, frames, audio, trimmed_audio, decode_pipe
+    gc.collect()
+    torch.cuda.empty_cache()
+
+
+# Private aliases keep the frozen runner call sites small and auditable.
+_install_streamed_weight_only_fp8 = install_streamed_weight_only_fp8
+_build_denoise_pipe = build_denoise_pipe
+_run_inputs = run_inputs
+_decode_and_export = decode_and_export

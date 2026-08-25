@@ -3,10 +3,21 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from evg.models.minimax_h3.runtime import _load_local_components
+import torch
+
+from anemoi.models.minimax_h3.runner import (
+    _configure_cuda_driver_link,
+    _enable_long_sequence_group_offload,
+)
+from anemoi.models.minimax_h3.runtime import (
+    EvalTimer,
+    OffloadTransferTimer,
+    _load_local_components,
+)
 
 
 class _Pipeline:
@@ -22,6 +33,20 @@ class _Pipeline:
 
 
 class LocalComponentLoadingTests(unittest.TestCase):
+    def test_triton_driver_directory_exposes_linker_name_and_soname(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            driver_root = root / "driver"
+            driver_root.mkdir()
+            driver = driver_root / "libcuda.so.1"
+            driver.touch()
+            with patch.dict(os.environ, {"LD_LIBRARY_PATH": str(driver_root)}):
+                _configure_cuda_driver_link(root / "cache")
+
+            link_root = root / "cache/driver-lib"
+            self.assertEqual((link_root / "libcuda.so").resolve(), driver)
+            self.assertEqual((link_root / "libcuda.so.1").resolve(), driver)
+
     def test_components_are_loaded_from_the_prepared_tree_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -44,6 +69,77 @@ class LocalComponentLoadingTests(unittest.TestCase):
                 with self.assertRaisesRegex(FileNotFoundError, "audio_vae"):
                     _load_local_components(pipeline, ["audio_vae"])
             self.assertEqual(pipeline.calls, [])
+
+
+class LongSequenceTimingTests(unittest.TestCase):
+    def test_group_offload_is_long_sequence_only(self) -> None:
+        class Transformer:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def enable_group_offload(self, **kwargs: object) -> None:
+                self.calls.append(kwargs)
+
+        transformer = Transformer()
+        self.assertIsNone(_enable_long_sequence_group_offload(transformer, 38_247))
+        self.assertEqual(transformer.calls, [])
+
+        result = _enable_long_sequence_group_offload(transformer, 73_768)
+        self.assertEqual(result["num_blocks_per_group"], 1)
+        self.assertEqual(result["offload_device"], "cpu")
+        self.assertEqual(transformer.calls, [result])
+
+    def test_transformer_timer_excludes_group_transfer_spans(self) -> None:
+        class Group:
+            def onload_(self) -> None:
+                pass
+
+            def offload_(self) -> None:
+                pass
+
+        group = Group()
+
+        class Transformer(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.block = torch.nn.Identity()
+                hook = SimpleNamespace(group=group)
+                self.block._diffusers_hook = SimpleNamespace(hooks={"group": hook})
+
+            def forward(self, value: torch.Tensor) -> torch.Tensor:
+                group.onload_()
+                result = value + 1
+                group.offload_()
+                return result
+
+        durations = (10.0, 2.0, 3.0)
+
+        class Event:
+            created = 0
+
+            def __init__(self, **_: object) -> None:
+                self.index = Event.created
+                Event.created += 1
+
+            def record(self) -> None:
+                pass
+
+            def elapsed_time(self, _: object) -> float:
+                return durations[self.index // 2]
+
+        transformer = Transformer()
+        transfers = OffloadTransferTimer(transformer)
+        timer = EvalTimer(transformer, excluded=transfers)
+        with patch("torch.cuda.Event", Event), patch("torch.cuda.synchronize"):
+            transfers.install()
+            timer.install()
+            self.assertEqual(timer.module(torch.tensor(1)), torch.tensor(2))
+            timer.remove()
+            transfers.remove()
+
+            self.assertEqual(timer.resident_samples_ms(), [10.0])
+            self.assertEqual(timer.excluded_samples_ms(), [5.0])
+            self.assertEqual(timer.samples_ms(), [5.0])
 
     def test_silently_unloaded_component_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

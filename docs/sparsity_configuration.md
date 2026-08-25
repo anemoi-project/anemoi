@@ -1,6 +1,6 @@
 # Sparse Attention Configuration
 
-EVG resolves sparse-attention configuration into an immutable matrix with one
+Anemoi resolves sparse-attention configuration into an immutable matrix with one
 row per diffusion step and one column per model attention layer. A value of
 `0.0` selects dense attention for that cell. Values greater than zero select
 Draft Attention with that sparsity ratio.
@@ -66,4 +66,4 @@ against the loaded model before diffusion starts.
 
 This configuration object belongs to the generic BF16 Draft Attention backend.
 MiniMax-H3 MPA uses its validated layer budget and FP8/FP16 split directly in
-`evg.models.minimax_h3.runner`; it does not consume this legacy JSON schema.
+`anemoi.models.minimax_h3.runner`; it does not consume this legacy JSON schema.

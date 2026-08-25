@@ -1,9 +1,9 @@
 import unittest
 
-from evg.config import EngineConfig
-from evg.engine import EVGEngine
-from evg.models import get_model_registry
-from evg.types import TaskType
+from anemoi.config import EngineConfig
+from anemoi.engine import AnemoiEngine
+from anemoi.models import get_model_registry
+from anemoi.types import TaskType
 
 
 class ModelRegistryTest(unittest.TestCase):
@@ -39,7 +39,7 @@ class ModelRegistryTest(unittest.TestCase):
         self.assertEqual(spec.default_variant, "fl2va-pruned-fp8")
 
     def test_engine_can_create_runtime_plan(self) -> None:
-        engine = EVGEngine(EngineConfig(model="wan2.2", variant="t2v-a14b"))
+        engine = AnemoiEngine(EngineConfig(model="wan2.2", variant="t2v-a14b"))
         plan = engine.plan()
         self.assertEqual(plan.model_id, "wan2.2")
         self.assertEqual(plan.variant_id, "t2v-a14b")

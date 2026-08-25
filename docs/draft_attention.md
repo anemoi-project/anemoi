@@ -1,6 +1,6 @@
 # Draft Attention
 
-EVG's current Draft Attention backend has three pieces:
+Anemoi's current Draft Attention backend has three pieces:
 
 1. Reshape visual Q/K into the latent video grid and apply 2D average pooling.
 2. Build a draft map with blockwise QK, online softmax statistics, and global top-k.

@@ -30,7 +30,7 @@ def main() -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument(
         "--model-root",
-        default=os.environ.get("EVG_MODEL_ROOT"),
+        default=os.environ.get("ANEMOI_MODEL_ROOT"),
         help="Optional directory containing local model checkpoints",
     )
     parser.add_argument(

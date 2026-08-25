@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-env_name="evg"
+env_name="anemoi"
 dry_run=0
 
 if [[ "${1:-}" == "--dry-run" ]]; then
@@ -51,7 +51,7 @@ elif version_at_least "${driver_version}" "560.28.03"; then
   torch_version="2.7.1"
   torch_index="cu126"
 else
-  echo "NVIDIA driver ${driver_version} is too old for EVG's native SM89 path." >&2
+  echo "NVIDIA driver ${driver_version} is too old for Anemoi's native SM89 path." >&2
   echo "Upgrade to at least 560.28.03 and retry." >&2
   exit 1
 fi
@@ -123,12 +123,12 @@ print(
 )
 PY
 
-echo "Installing EVG and development tools"
+echo "Installing Anemoi and development tools"
 cd "${repo_root}"
 MPA_SKIP_CUDA_BUILD=1 conda run --no-capture-output -n "${env_name}" \
   python -m pip install --no-build-isolation --editable '.[dev]'
 
 echo
-echo "EVG environment is ready. Activate it with:"
+echo "Anemoi environment is ready. Activate it with:"
 echo "  conda activate ${env_name}"
 echo "  export MPA_CUDA_HOME=\"\${CONDA_PREFIX}\""

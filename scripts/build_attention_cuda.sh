@@ -14,13 +14,18 @@ fi
 
 export CUDA_HOME="${cuda_root}"
 export PATH="${cuda_root}/bin:${PATH}"
-export TORCH_CUDA_ARCH_LIST="${MPA_TORCH_CUDA_ARCH_LIST:-8.9}"
+components="${MPA_BUILD_COMPONENTS:-sm89}"
+default_arch="8.9"
+if [[ ",${components}," == *",sm120_q64,"* ]]; then
+  default_arch="12.0a"
+fi
+export TORCH_CUDA_ARCH_LIST="${MPA_TORCH_CUDA_ARCH_LIST:-${default_arch}}"
 export MAX_JOBS="${MPA_MAX_JOBS:-4}"
 
-build_root="${MPA_BUILD_ROOT:-${TMPDIR:-/tmp}/evg-mpa-build-${UID}}"
+build_root="${MPA_BUILD_ROOT:-${TMPDIR:-/tmp}/anemoi-mpa-build-${UID}}"
 mkdir -p "${build_root}/attention/temp" "${build_root}/attention/lib"
 cd "${repo_root}"
-MPA_BUILD_COMPONENTS=sm89 "${python_bin}" setup.py build_ext \
+MPA_BUILD_COMPONENTS="${components}" "${python_bin}" setup.py build_ext \
   --build-temp "${build_root}/attention/temp" \
   --build-lib "${build_root}/attention/lib" \
   --inplace

@@ -707,11 +707,10 @@ void MPA_ATTENTION_KERNEL_ENTRY(
       int32_t* low_lut = fp8_lut + metadata_row * num_physical_stages;
       uint32_t absolute_stage = 0;
 
-      if constexpr (HasFp8 && !HasFp16) {
-        // Keep the inherited Sparge/Sage all-FP8 copy/compute pipeline in the
-        // same specialization.  K and V occupy disjoint shared-memory regions:
-        // with two committed groups outstanding, wait_group<1> exposes the
-        // older operand while the newer operand continues to overlap compute.
+      // Keep the inherited Sparge/Sage copy/compute pipeline for every INT8
+      // phase. K and V occupy disjoint shared-memory regions:
+      // with two committed groups outstanding, wait_group<1> exposes the
+      // older operand while the newer operand continues to overlap compute.
         int32_t* low_delta = low_lut;
         const float* k_scale_base =
             k_scale + (batch_id * num_kv_heads + kv_head) *
@@ -719,7 +718,11 @@ void MPA_ATTENTION_KERNEL_ENTRY(
 
         // Prologue: Q is already resident.  Issue predicated K0 followed by
         // padded V0, leaving both groups outstanding.
+#if defined(MPA_K64_BLOCK_MODE)
+        absolute_stage = static_cast<uint32_t>(*low_delta++);
+#else
         absolute_stage += static_cast<uint32_t>(*low_delta++);
+#endif
         int8_t* k_lane =
             k8 + ((batch_id * num_kv_heads + kv_head) * kv_len +
                   absolute_stage * kCtaK +
@@ -793,6 +796,18 @@ void MPA_ATTENTION_KERNEL_ENTRY(
               }
             }
           }
+#if defined(MPA_K64_BLOCK_MODE)
+          {
+            const uint32_t valid_k = static_cast<uint32_t>(
+                valid_k_counts[batch_id * num_physical_stages +
+                               absolute_stage]);
+            const uint32_t k_index_base =
+                get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
+                2 * (lane_id % 4);
+            apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(
+                k_index_base, rs_storage.as_float, valid_k);
+          }
+#endif
           update_mdo<
               num_tiles_q, num_tiles_k, num_tiles_v, false, true, false>(
               rs_storage.as_float, ro, m, d,
@@ -806,7 +821,11 @@ void MPA_ATTENTION_KERNEL_ENTRY(
           // All stages reached here precede the final active stage, hence K
           // is a full physical tile and the donor unpredicated copy is safe.
           __syncthreads();
+#if defined(MPA_K64_BLOCK_MODE)
+          absolute_stage = static_cast<uint32_t>(*low_delta++);
+#else
           absolute_stage += static_cast<uint32_t>(*low_delta++);
+#endif
           k_lane =
               k8 + ((batch_id * num_kv_heads + kv_head) * kv_len +
                     absolute_stage * kCtaK +
@@ -878,9 +897,25 @@ void MPA_ATTENTION_KERNEL_ENTRY(
               }
             }
           }
+#if defined(MPA_K64_BLOCK_MODE)
+          {
+            const uint32_t valid_k = static_cast<uint32_t>(
+                valid_k_counts[batch_id * num_physical_stages +
+                               absolute_stage]);
+            const uint32_t k_index_base =
+                get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
+                2 * (lane_id % 4);
+            apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(
+                k_index_base, rs_storage.as_float, valid_k);
+          }
+#endif
 
           __syncthreads();
+#if defined(MPA_K64_BLOCK_MODE)
+          absolute_stage = static_cast<uint32_t>(*low_delta++);
+#else
           absolute_stage += static_cast<uint32_t>(*low_delta++);
+#endif
           k_lane =
               k8 + ((batch_id * num_kv_heads + kv_head) * kv_len +
                     absolute_stage * kCtaK +
@@ -964,12 +999,23 @@ void MPA_ATTENTION_KERNEL_ENTRY(
               }
             }
           }
+#if defined(MPA_K64_BLOCK_MODE)
+          const uint32_t valid_k = static_cast<uint32_t>(
+              valid_k_counts[batch_id * num_physical_stages +
+                             absolute_stage]);
+          const uint32_t k_index_base =
+              get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
+              2 * (lane_id % 4);
+          apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(
+              k_index_base, rs_storage.as_float, valid_k);
+#else
           const uint32_t k_index_base =
               absolute_stage * kCtaK +
               get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
               2 * (lane_id % 4);
           apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(
               k_index_base, rs_storage.as_float, kv_len);
+#endif
           update_mdo<
               num_tiles_q, num_tiles_k, num_tiles_v, false, true, false>(
               rs_storage.as_float, ro, m, d, base2_softmax_scale);
@@ -987,149 +1033,6 @@ void MPA_ATTENTION_KERNEL_ENTRY(
               smem_v8, rs_fp8, ro, d);
           __syncthreads();
         }
-      } else {
-        // Mixed specializations retain their separate stage-by-stage path;
-        // this change intentionally does not perturb their spill structure.
-        for (uint32_t iteration = 0; iteration < low_iterations; ++iteration) {
-#if defined(MPA_K64_BLOCK_MODE)
-          // Native K64 routes store absolute physical-stage IDs.  The donor
-          // Q128 path uses positive deltas so that its tightly pipelined
-          // all-FP8 loop can update one running stage index instead.
-          absolute_stage = static_cast<uint32_t>(low_lut[iteration]);
-#else
-          absolute_stage += static_cast<uint32_t>(low_lut[iteration]);
-#endif
-
-          int8_t* k_lane =
-              k8 + ((batch_id * num_kv_heads + kv_head) * kv_len +
-                    absolute_stage * kCtaK +
-                    kCtaK / num_warps * warp_id +
-                    lane_id / qk_line_lanes) *
-                       HeadDim +
-              (lane_id % qk_line_lanes) * kPackInt8;
-          uint32_t k_smem_load = smem_k8.get_permuted_offset(
-              warp_id * qk_lines_per_warp * k_smem_iters_col +
-                  lane_id / qk_line_lanes,
-              lane_id % qk_line_lanes);
-          const uint32_t k_load_row =
-              absolute_stage * kCtaK + kCtaK / num_warps * warp_id +
-              lane_id / qk_line_lanes;
-          load_global_to_share<
-              qk_line_lanes, qk_lines_per_warp, qk_smem_iters_row,
-              k_smem_iters_col, (HeadDim == 64 ? SwizzleMode::k64B
-                                               : SwizzleMode::k128B),
-              HeadDim / kPackInt8, kCtaK>(
-              k_lane, k_smem_load, HeadDim, smem_k8, k_load_row, kv_len);
-          cp_async::commit_group();
-
-          int8_t* v_lane =
-              reinterpret_cast<int8_t*>(v8) +
-              ((batch_id * num_kv_heads + kv_head) * HeadDim +
-               HeadDim / num_warps * warp_id + lane_id / v_line_lanes) *
-                  padded_kv_len +
-              absolute_stage * kCtaK +
-              (lane_id % v_line_lanes) * kPackFp8;
-          uint32_t v_smem_load = smem_v8.get_permuted_offset(
-              warp_id * v_lines_per_warp * v_smem_iters_col +
-                  lane_id / v_line_lanes,
-              lane_id % v_line_lanes);
-          load_fp8_V_global_to_share<
-              v_line_lanes, v_lines_per_warp, v_smem_iters_row,
-              v_smem_iters_col, SwizzleMode::k64B, kCtaK / kPackFp8,
-              kCtaK>(v_lane, v_smem_load, padded_kv_len, smem_v8);
-          cp_async::commit_group();
-          cp_async::wait_group<0>();
-          __syncthreads();
-
-          union LowScoreStorage {
-            int32_t as_int[num_tiles_q][num_tiles_k][8];
-            float as_float[num_tiles_q][num_tiles_k][8];
-          } rs_storage;
-          uint32_t q_offset = q_smem_mma;
-          uint32_t k_offset = k_smem_mma;
-          compute_int_qk<
-              num_warps_q, num_warps_k, num_tiles_q, num_tiles_k,
-              low_qk_inner, (HeadDim == 64 ? SwizzleMode::k64B
-                                           : SwizzleMode::k128B),
-              HeadDim / kPackInt8, DataType::kInt8>(
-              smem_q8, smem_k8, rs_storage.as_int, q_offset, k_offset);
-
-          const float dequant_scale =
-              q_dequant_scale *
-              k_scale[(batch_id * num_kv_heads + kv_head) *
-                          num_physical_stages +
-                      absolute_stage];
-          const bool donor_predequant_boundary =
-              iteration + 2 >= low_iterations;
-#pragma unroll
-          for (uint32_t fq = 0; fq < num_tiles_q; ++fq) {
-#pragma unroll
-            for (uint32_t fk = 0; fk < num_tiles_k; ++fk) {
-#pragma unroll
-              for (uint32_t element = 0; element < 8; ++element) {
-                const float score =
-                    __int2float_rz(rs_storage.as_int[fq][fk][element]);
-                rs_storage.as_float[fq][fk][element] =
-                    donor_predequant_boundary
-                    ? score * dequant_scale
-                    : score;
-              }
-            }
-          }
-          if (
-#if defined(MPA_K64_BLOCK_MODE)
-              true
-#else
-              iteration + 1 == low_iterations
-#endif
-          ) {
-#if defined(MPA_K64_BLOCK_MODE)
-            // A logical 2-D tile may occupy fewer than 64 lanes even when it
-            // is not the final physical stage (8x7 is the common example).
-            // Mask against this selected stage's exact valid count, not the
-            // global padded K capacity.
-            const uint32_t valid_k = static_cast<uint32_t>(
-                valid_k_counts[batch_id * num_physical_stages +
-                               absolute_stage]);
-            const uint32_t k_index_base =
-                get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
-                2 * (lane_id % 4);
-            apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(
-                k_index_base, rs_storage.as_float, valid_k);
-#else
-            const uint32_t k_index_base =
-                absolute_stage * kCtaK +
-                get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
-                2 * (lane_id % 4);
-            apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(
-                k_index_base, rs_storage.as_float, kv_len);
-#endif
-          }
-          const float stage_scale = donor_predequant_boundary
-              ? base2_softmax_scale
-              : base2_softmax_scale * dequant_scale;
-          update_mdo<
-              num_tiles_q, num_tiles_k, num_tiles_v, false, true, false>(
-              rs_storage.as_float, ro, m, d, stage_scale);
-          accumulate_d<num_tiles_q, num_tiles_k, ComputeUnit::kCudaCore>(
-              rs_storage.as_float, d);
-          uint32_t rs_fp8[num_tiles_q][num_tiles_k / 2][4];
-          RS_32_to_8<num_tiles_q, num_tiles_k>(
-              rs_storage.as_float, rs_fp8);
-          if constexpr (HeadDim == 128) {
-            compute_fp8_sv_stage_tilewise<
-                0, num_tiles_q, num_tiles_k, num_tiles_v,
-                SwizzleMode::k64B, kCtaK / kPackFp8>(
-                smem_v8, rs_fp8, ro);
-          } else {
-            compute_fp8_sv_inst_buf_fp16_accu<
-                num_warps_q, num_warps_k, num_tiles_q, num_tiles_k,
-                num_tiles_v, SwizzleMode::k64B, kCtaK / kPackFp8>(
-                smem_v8, rs_fp8, ro, d);
-          }
-          __syncthreads();
-        }
-      }
     }
   }
 

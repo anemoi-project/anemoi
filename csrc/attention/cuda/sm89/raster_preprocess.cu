@@ -41,8 +41,8 @@
 
 #include "api.h"
 #include "../../../common/raw_bhsd_layout.h"
+#include "../common/execution_device.cuh"
 #include "../common/packed_raster_layout.cuh"
-#include "sm89_experiment.cuh"
 
 namespace mpa::attention {
 namespace {
@@ -149,15 +149,15 @@ Raster8x16Layout checked_layout(
   return Raster8x16Layout(frames, height, width);
 }
 
-void check_sm89_and_grid(
+void check_raster_and_grid(
     const torch::Tensor& anchor,
     int64_t patch_count,
     int64_t max_heads) {
   const cudaDeviceProp* properties =
       at::cuda::getDeviceProperties(anchor.get_device());
   TORCH_CHECK(
-      mpa::attention::sm89_execution_device(properties),
-      "Ada raster preprocessing requires compute capability 8.9, found sm_",
+      mpa::attention::sm89_or_sm120_execution_device(properties),
+      "Raster preprocessing requires sm89 or sm120, found sm_",
       properties->major,
       properties->minor);
   TORCH_CHECK(
@@ -505,7 +505,7 @@ pack_indexed_k64_qkv_fp16(
       "indexed K64 metadata must have matching positive K64 capacity");
 
   c10::cuda::CUDAGuard device_guard(query.device());
-  check_sm89_and_grid(
+  check_raster_and_grid(
       query, physical_tokens / 64, query.size(1));
   const auto fp16_options = query.options().dtype(at::ScalarType::Half);
   auto packed_query = torch::empty(
@@ -604,7 +604,7 @@ pack_h3_k64_qkv_fp16(
       prefix_blocks * 64 + video_physical_tokens;
 
   c10::cuda::CUDAGuard device_guard(query.device());
-  check_sm89_and_grid(
+  check_raster_and_grid(
       query, prefix_blocks + video_physical_tokens / 64, query.size(1));
   const auto fp16_options = query.options().dtype(at::ScalarType::Half);
   auto packed_query = torch::empty(
@@ -704,7 +704,7 @@ pack_raster_qkv_fp16(
       layout.patch_count, kRasterPatchTokens, "R*128 virtual tokens");
 
   c10::cuda::CUDAGuard device_guard(query.device());
-  check_sm89_and_grid(
+  check_raster_and_grid(
       query, layout.patch_count, std::max(query.size(1), key.size(1)));
   const auto fp16_options = query.options().dtype(at::ScalarType::Half);
   auto packed_query = torch::empty(
@@ -782,7 +782,7 @@ torch::Tensor pack_raster_v_fp16(
       layout.patch_count, kRasterPatchTokens, "R*128 virtual tokens");
 
   c10::cuda::CUDAGuard device_guard(value.device());
-  check_sm89_and_grid(value, layout.patch_count, value.size(1));
+  check_raster_and_grid(value, layout.patch_count, value.size(1));
   auto packed_value = torch::empty(
       {value.size(0), value.size(1), virtual_tokens, value.size(3)},
       value.options().dtype(at::ScalarType::Half));
@@ -856,7 +856,7 @@ std::tuple<torch::Tensor, torch::Tensor> pack_raster_kv_fp16(
       layout.patch_count, kRasterPatchTokens, "R*128 virtual tokens");
 
   c10::cuda::CUDAGuard device_guard(key.device());
-  check_sm89_and_grid(key, layout.patch_count, key.size(1));
+  check_raster_and_grid(key, layout.patch_count, key.size(1));
   const auto fp16_options = key.options().dtype(at::ScalarType::Half);
   auto packed_key = torch::empty(
       {key.size(0), key.size(1), virtual_tokens, key.size(3)},

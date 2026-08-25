@@ -2,22 +2,23 @@
 
 ## Partition contract
 
-For every positive latent grid `H x W`, the production `stripe-compact`
-partition creates exactly `ceil(H * W / 64)` connected blocks. Every real
-token appears exactly once, no block contains more than 64 tokens, and padding
-lanes never become logical tokens. This differs from the historical regular
-`compact-grid` strategy. For example, `24x42` needs 16 ragged blocks instead
-of 18 regular blocks, increasing useful physical QK work from 76.56% to 96.90%.
+For every positive latent grid `H x W` and physical block capacity `C`, the
+production `stripe-compact` partition creates the minimum
+`B = ceil(H * W / C)` connected blocks. With
+`q, r = divmod(H * W, B)`, exactly `r` blocks contain `q + 1` real tokens and
+the remaining blocks contain `q`. Every real token appears exactly once,
+padding lanes never become logical tokens, and global block-mass spread is
+therefore at most one. This differs from the historical regular `compact-grid`
+strategy. For example, `24x42/C64` needs 16 ragged blocks instead of 18 regular
+blocks, increasing useful physical QK work from 76.56% to 96.90%.
 
 The cached host-side dynamic program cuts complete row bands. Each band follows
-a column-serpentine connected path and is divided into balanced intervals. It
-evaluates both grid orientations, then lexicographically minimizes perimeter,
-bounding-box waste, spatial moment, and aspect error while preserving the
-capacity-minimum block count.
-
-Only intervals inside one band are balanced. Blocks from different bands can
-have different token counts, and the global difference is not constrained to
-one token.
+a column-serpentine connected path and is divided into intervals of the global
+`q/q+1` sizes. Bands that cannot satisfy those sizes are infeasible. Among the
+remaining candidates the DP evaluates both grid orientations, then
+lexicographically minimizes perimeter, bounding-box waste, spatial moment, and
+aspect error. A centered internal-band-boundary tie makes equivalent stripe
+orders deterministic without overriding mass balance or geometry.
 
 ## Exact denominators and masks
 

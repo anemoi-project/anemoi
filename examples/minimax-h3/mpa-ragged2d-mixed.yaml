@@ -19,3 +19,7 @@ dense_first_layers: 2
 # Add the optional diagonal-Jensen second-moment correction to the fixed
 # pooled-QK probability score.
 diag_jensen: false
+
+# Missing same-frame adjacency anchors replace the weakest retained edge in
+# the lowest active precision budget; the retained budget never grows.
+enable_anchors: true

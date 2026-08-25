@@ -2,7 +2,7 @@
  * Copyright 2026 Mixed Attention Project Contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * Fast, allocation-inclusive final output assembly for the EVG integration.
+ * Fast, allocation-inclusive final output assembly for the Anemoi integration.
  * This translation unit deliberately inherits the attention extension's
  * --use_fast_math policy.  Numerical acceptance is therefore defined against
  * the eager construction by end-to-end error metrics, not bitwise identity.
@@ -23,6 +23,7 @@
 #include <type_traits>
 
 #include "api.h"
+#include "../common/execution_device.cuh"
 
 namespace {
 
@@ -162,7 +163,7 @@ __global__ __launch_bounds__(kThreads) void assemble_video_text_output_kernel(
 // Fused output boundary. The visual-query softmax has already traversed both
 // video and text K/V inside one CTA, so there is no second visual partition or
 // LSE state to merge here.  This kernel only converts the native BHSD visual
-// prefix to EVG's BSHD layout and appends the existing text-query output.
+// prefix to Anemoi's BSHD layout and appends the existing text-query output.
 __global__ __launch_bounds__(kThreads)
 void assemble_fused_visual_text_output_kernel(
     const __nv_bfloat16* __restrict__ visual_output_bhsd,
@@ -323,8 +324,8 @@ torch::Tensor assemble_h3_k64_output(
   const cudaDeviceProp* properties =
       at::cuda::getDeviceProperties(prefix_output_bhsd.get_device());
   TORCH_CHECK(
-      properties->major == 8 && properties->minor == 9,
-      "H3 K64 output assembly requires compute capability 8.9, found sm_",
+      mpa::attention::sm89_or_sm120_execution_device(properties),
+      "H3 K64 output assembly requires sm89 or sm120, found sm_",
       properties->major, properties->minor);
   TORCH_CHECK(
       prefix_tokens <= std::numeric_limits<int64_t>::max() - video_tokens,
@@ -458,7 +459,7 @@ torch::Tensor assemble_video_text_output(
       at::cuda::getDeviceProperties(video_output_bhsd.get_device());
   TORCH_CHECK(
       properties->major == 8 && properties->minor == 9,
-      "evg.layers.attention.mpa._cuda_attention output assembly requires compute capability 8.9, found sm_",
+      "anemoi.layers.attention.mpa._cuda_attention output assembly requires compute capability 8.9, found sm_",
       properties->major, properties->minor);
 
   auto output = torch::empty(
@@ -557,7 +558,7 @@ torch::Tensor assemble_fused_visual_text_output(
       at::cuda::getDeviceProperties(visual_output_bhsd.get_device());
   TORCH_CHECK(
       properties->major == 8 && properties->minor == 9,
-      "evg.layers.attention.mpa._cuda_attention fused output assembly requires compute capability 8.9, found sm_",
+      "anemoi.layers.attention.mpa._cuda_attention fused output assembly requires compute capability 8.9, found sm_",
       properties->major, properties->minor);
 
   auto output = torch::empty(

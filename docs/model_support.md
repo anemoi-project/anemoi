@@ -1,8 +1,8 @@
 # Model Support Plan
 
-This file records the initial video model families EVG will target.
+This file records the initial video model families Anemoi will target.
 
-| Family | Default variant | Runtime | Current EVG status | Main reason to support |
+| Family | Default variant | Runtime | Current Anemoi status | Main reason to support |
 | --- | --- | --- | --- | --- |
 | MiniMax-H3 | `fl2va-pruned-fp8` | Diffusers/Sol/native MPA | `supported` | Current end-to-end mainline with reproducible Dense, official Sol, and mixed-precision attention paths. |
 | Wan2.2 | `t2v-a14b` | Diffusers/native | `adapter-scaffolded` | Major open video family and a natural first Draft Attention target. |
@@ -14,7 +14,7 @@ This file records the initial video model families EVG will target.
 
 ## Near-Term Milestones
 
-1. Make every family visible through `evg list-models` and `evg inspect`.
+1. Make every family visible through `anemoi list-models` and `anemoi inspect`.
 2. Keep MiniMax-H3 Dense as the quality baseline for every attention change.
 3. Optimize the native MiniMax-H3 MPA path without changing its routing contract.
 4. Extend the same controlled runner to additional validated GPU architectures.

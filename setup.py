@@ -15,11 +15,15 @@ from setuptools import setup
 ROOT = Path(__file__).resolve().parent
 
 
+def _source(path: Path) -> str:
+    return path.relative_to(ROOT).as_posix()
+
+
 def _requested_components() -> set[str]:
     value = os.environ.get("MPA_BUILD_COMPONENTS", "sm89")
     requested = {item.strip() for item in value.split(",") if item.strip()}
     aliases = {"attention": "sm89"}
-    known = {"sm89", *aliases}
+    known = {"sm89", "sm120_q64", *aliases}
     unknown = requested - known
     if unknown:
         raise RuntimeError(
@@ -57,19 +61,72 @@ def _extensions():
         common = attention / "common"
         modules.append(
             CUDAExtension(
-                name="evg.layers.attention.mpa._cuda_attention",
+                name="anemoi.layers.attention.mpa._cuda_attention",
                 sources=[
-                    str(sm89 / "bindings.cpp"),
-                    str(sm89 / "k64_attention_host.cu"),
-                    str(sm89 / "value_preprocess.cu"),
-                    str(sm89 / "raster_preprocess.cu"),
-                    str(sm89 / "output_assembly.cu"),
-                    str(sm89 / "instantiations" / "inst_k64_d128.cu"),
+                    _source(sm89 / "bindings.cpp"),
+                    _source(sm89 / "k64_attention_host.cu"),
+                    _source(sm89 / "value_preprocess.cu"),
+                    _source(sm89 / "raster_preprocess.cu"),
+                    _source(sm89 / "output_assembly.cu"),
+                    _source(sm89 / "instantiations" / "inst_k64_d128.cu"),
+                    _source(sm89 / "instantiations" / "inst_q128_k64_d128.cu"),
                 ],
                 include_dirs=[
                     str(attention),
                     str(attention.parent),
                     str(sm89),
+                    str(common),
+                ],
+                extra_compile_args={
+                    "cxx": ["-O3", "-std=c++17"],
+                    "nvcc": [
+                        "-O3",
+                        "-std=c++17",
+                        "-U__CUDA_NO_HALF_OPERATORS__",
+                        "-U__CUDA_NO_HALF_CONVERSIONS__",
+                        "--use_fast_math",
+                        "-lineinfo",
+                        "-Xptxas=-v",
+                        "-Xcompiler",
+                        "-include,cassert",
+                    ],
+                },
+            )
+        )
+
+    if "sm120_q64" in components:
+        attention = ROOT / "csrc" / "attention" / "cuda"
+        sm120 = attention / "sm120"
+        common = attention / "common"
+        modules.append(
+            CUDAExtension(
+                name="anemoi.layers.attention.mpa._cuda_sm120_q64",
+                sources=[
+                    _source(sm120 / "bindings.cpp"),
+                    _source(sm120 / "h3_draft_probability.cu"),
+                    _source(sm120 / "h3_route_precision.cu"),
+                    _source(sm120 / "q64_attention_host.cu"),
+                    _source(sm120 / "instantiations" / "inst_q64_k64_d128_fp16.cu"),
+                    _source(sm120 / "instantiations" / "inst_q64_k64_d128_int8.cu"),
+                    _source(sm120 / "instantiations" / "inst_q64_k64_d128_int8_dense.cu"),
+                    _source(sm120 / "instantiations" / "inst_q128_k64_d128_fp16.cu"),
+                    _source(sm120 / "instantiations" / "inst_q128_k64_d128_int8.cu"),
+                    _source(sm120 / "instantiations" / "inst_q128_k64_d128_int8_dense.cu"),
+                    _source(sm120 / "instantiations" / "inst_q128_k64_d128_mxfp8.cu"),
+                    _source(sm120 / "instantiations" / "inst_q128_k64_d128_mxfp8_compact.cu"),
+                    _source(sm120 / "instantiations" / "inst_q128_k64_d128_nvfp4.cu"),
+                    _source(sm120 / "instantiations" / "inst_q64_k64_d128_nvfp4.cu"),
+                    _source(sm120 / "instantiations" / "inst_q128_k64_d128_nv_mx_fp16.cu"),
+                    _source(sm120 / "instantiations" / "inst_q64_k64_d128_nv_mx_fp16.cu"),
+                    _source(sm120 / "instantiations" / "inst_q128_k64_d128_nv_int8_fp16.cu"),
+                    _source(sm120 / "instantiations" / "inst_q64_k64_d128_nv_int8_fp16.cu"),
+                    _source(sm120 / "instantiations" / "inst_q64_k64_d128_mxfp8.cu"),
+                    _source(sm120 / "q128_microscaling_preparation.cu"),
+                ],
+                include_dirs=[
+                    str(attention),
+                    str(attention.parent),
+                    str(sm120),
                     str(common),
                 ],
                 extra_compile_args={

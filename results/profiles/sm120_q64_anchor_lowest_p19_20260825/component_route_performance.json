@@ -1,0 +1,86 @@
+{
+  "schema": "anemoi.diagnostic.sm120_q64_anchor_route_perf.v3",
+  "capture": "p19_dense_step10_layer02.pt",
+  "capture_sha256": "4261712483fec6f2e9203fc686f89b6b2bac21a91873377abd62e47a4a85a756",
+  "implementation_commit": "12dc583dd98672b313bcf46f0ab53daaa8f000dc",
+  "extension_sha256": "049d15c15f9abb281fb045fcb234a3390b2a9548fb85502d0ffde0c6b0d30c23",
+  "dense_baseline": {
+    "role": "real same-workload Q/K/V source and numerical reference",
+    "route_component_ms": null,
+    "note": "Dense attention does not execute DraftMap route/materialization; native_no_anchor is the isolated Anchor-overhead control."
+  },
+  "workload": {
+    "frames": 73,
+    "height": 24,
+    "width": 42,
+    "logical_blocks": 1168,
+    "heads": 56,
+    "ratios": [0.0, 1.0, 0.0, 0.0],
+    "anchor_count": 5402,
+    "block_token_counts": [63]
+  },
+  "reference_checks": [
+    {
+      "requested_sparsity": 0.9,
+      "retained_edges_per_head": 136422,
+      "total_edges_per_head": 1364224,
+      "measured_effective_sparsity": 0.9000002932069807,
+      "active_ids_exact": true,
+      "phase_counts_exact": true,
+      "retained_budget_exact": true
+    },
+    {
+      "requested_sparsity": 0.85,
+      "retained_edges_per_head": 204634,
+      "total_edges_per_head": 1364224,
+      "measured_effective_sparsity": 0.8499997067930194,
+      "active_ids_exact": true,
+      "phase_counts_exact": true,
+      "retained_budget_exact": true
+    },
+    {
+      "requested_sparsity": 0.65,
+      "retained_edges_per_head": 477478,
+      "total_edges_per_head": 1364224,
+      "measured_effective_sparsity": 0.6500002932069806,
+      "active_ids_exact": true,
+      "phase_counts_exact": true,
+      "retained_budget_exact": true
+    }
+  ],
+  "physical_materialization_active_ids_exact": true,
+  "protocol": {
+    "warmups": 5,
+    "repetitions": 31,
+    "order": "forward/reverse interleaved CUDA events"
+  },
+  "route_only": {
+    "native_no_anchor": {"median_ms": 5.028480052947998, "min_ms": 4.73360013961792, "samples": 31},
+    "native_anchor": {"median_ms": 5.107967853546143, "min_ms": 4.930912017822266, "samples": 31},
+    "eager_anchor_reference": {"median_ms": 12.488767623901367, "min_ms": 11.711711883544922, "samples": 31}
+  },
+  "materialize_only": {
+    "native_no_anchor": {"median_ms": 0.24223999679088593, "min_ms": 0.22729599475860596, "samples": 31},
+    "native_anchor": {"median_ms": 0.23971199989318848, "min_ms": 0.21807999908924103, "samples": 31},
+    "eager_anchor_reference": {"median_ms": 1.352031946182251, "min_ms": 1.327679991722107, "samples": 31}
+  },
+  "route_plus_materialize": {
+    "native_no_anchor": {"median_ms": 5.304768085479736, "min_ms": 5.222239971160889, "samples": 31},
+    "native_anchor": {"median_ms": 5.32751989364624, "min_ms": 5.2902398109436035, "samples": 31},
+    "eager_anchor_reference": {"median_ms": 14.092255592346191, "min_ms": 13.805184364318848, "samples": 31}
+  },
+  "native_anchor_delta_vs_no_anchor_ms": 0.022751808166503906,
+  "native_anchor_over_no_anchor": 1.0042889355010223,
+  "native_anchor_projected_1872_call_delta_s": 0.04259138488769531,
+  "native_anchor_gain_vs_eager_ms": 8.764735698699951,
+  "native_anchor_speedup_vs_eager": 2.6451812238473362,
+  "historical_r2_scan_baseline": {
+    "implementation_commit": "ca6a329",
+    "route_only_native_anchor_median_ms": 7.1146559715271,
+    "route_plus_materialize_native_anchor_median_ms": 7.368927955627441,
+    "native_anchor_delta_vs_no_anchor_ms": 2.0781760215759277,
+    "compact_gain_vs_r2_scan_ms": 2.041408061981201,
+    "compact_speedup_vs_r2_scan": 1.383211535980533,
+    "added_anchor_overhead_reduction": 0.9890529933393966
+  }
+}
