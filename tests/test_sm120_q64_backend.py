@@ -108,6 +108,46 @@ class SM120Q64BackendTests(unittest.TestCase):
         self.assertEqual(result, "probability")
         self.assertEqual(operation.call_args.args, (q_pool, k_pool))
 
+    def test_h3_k_tail_r2_wrapper_forwards_prepared_inputs(self) -> None:
+        from anemoi.layers.attention.mpa.backends import sm120_q64
+
+        operation = Mock(return_value="probability")
+        q_pool = torch.empty((1, 14, 32, 128), dtype=torch.float16)
+        k_pool = torch.empty_like(q_pool)
+        packed_k = torch.empty((1, 14, 33 * 64, 128), dtype=torch.float16)
+        counts = torch.full((32,), 64, dtype=torch.int32)
+        with patch.object(
+            sm120_q64, "_load_h3_k_tail_r2", return_value=operation
+        ):
+            result = sm120_q64.sm120_h3_k_tail_r2_probability(
+                q_pool, k_pool, packed_k, counts, prefix_blocks=1
+            )
+
+        self.assertEqual(result, "probability")
+        self.assertEqual(
+            operation.call_args.args, (q_pool, k_pool, packed_k, counts, 1)
+        )
+
+    def test_h3_k_tail_r1_wrapper_forwards_prepared_inputs(self) -> None:
+        from anemoi.layers.attention.mpa.backends import sm120_q64
+
+        operation = Mock(return_value="probability")
+        q_pool = torch.empty((1, 14, 32, 128), dtype=torch.float16)
+        k_pool = torch.empty_like(q_pool)
+        packed_k = torch.empty((1, 14, 33 * 64, 128), dtype=torch.float16)
+        counts = torch.full((32,), 64, dtype=torch.int32)
+        with patch.object(
+            sm120_q64, "_load_h3_k_tail_r1", return_value=operation
+        ):
+            result = sm120_q64.sm120_h3_k_tail_r1_probability(
+                q_pool, k_pool, packed_k, counts, prefix_blocks=1
+            )
+
+        self.assertEqual(result, "probability")
+        self.assertEqual(
+            operation.call_args.args, (q_pool, k_pool, packed_k, counts, 1)
+        )
+
     def test_h3_donor_first_wrapper_passes_ragged_geometry_and_optional_scales(
         self,
     ) -> None:

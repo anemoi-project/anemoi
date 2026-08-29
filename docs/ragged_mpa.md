@@ -27,32 +27,22 @@ The request-static device layout stores:
 - `indices`: packed-slot to original-video-token mapping;
 - `slot_valid`: whether a physical lane contains a real token;
 - `counts`: exact real-token count for every block;
-- `inverse`: original-video-token to packed-slot mapping;
-- `anchors`: self and shared-boundary adjacency within each frame.
+- `inverse`: original-video-token to packed-slot mapping.
 
 The native single-load packer gathers Q/K/V through `indices` and writes zero
 for invalid lanes. DraftMap Q/K means divide by each block's true `counts`, not
-by 64. Optional diagonal-Jensen second moments use the same denominator.
-Attention receives exact key counts for prefix and video blocks, so invalid
-K64 columns are masked by the existing native kernel. Output assembly writes
-only real packed video slots through `inverse`.
+by 64. Attention receives exact key counts for prefix and video blocks, so
+invalid K64 columns are masked by the existing native kernel. Output assembly
+writes only real packed video slots through `inverse`.
 
 ## Routing and precision
 
-The routing score is the row-softmax probability of pooled QK logits. Setting
-`diag_jensen: true` adds the diagonal second-moment correction without changing
-partition or budget semantics. Routing performs an exact global top-k over all
-video block pairs for each batch/head.
-Same-frame self and shared-boundary neighbours are mandatory FP16 anchors, but
-they consume the retained budget by borrowing FP8 seats when needed. If a very
-small grid requests fewer retained pairs than there are mandatory anchors, the
-router raises retention only to that minimum feasible anchor count instead of
-rejecting the resolution.
+The production routing score is the row-softmax probability of pooled QK
+logits, followed by exact global top-k per batch/head. The calibrated Mean20
+L2-L49 schedule averages 80% sparsity (20% keep) over sparse layers. Retained
+pairs, prefix K/V, and prefix query rows use the native INT8 phase by default.
+Scheduled-dense calls use original-dtype framework SDPA, and unselected pairs
+are dropped directly.
 
-The released schedule drops 88%, 82%, and 58% of video block pairs across the
-three sparse layer regions. Retained pairs use FP8/FP16=80/20 before anchor
-promotion. Prefix K/V remains exact FP16, scheduled dense calls and prefix
-query rows use original-dtype framework SDPA, and skipped pairs receive no
-compensation.
-
-The current integrated executor is the optimized native SM89 Q64xK64 kernel.
+The integrated executors are the optimized native SM89 Q64 and SM120 Q64/Q128
+paths; runtime device capability and `query_block_size` select the kernel.

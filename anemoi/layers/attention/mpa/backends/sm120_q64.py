@@ -55,6 +55,18 @@ def _load_h3_draft() -> Callable[..., torch.Tensor]:
 
 
 @lru_cache(maxsize=1)
+def _load_h3_k_tail_r1() -> Callable[..., torch.Tensor]:
+    import_native_extension("sm120_q64")
+    return resolve_mixed_attention_operator("sm120_h3_k_tail_r1_probability")
+
+
+@lru_cache(maxsize=1)
+def _load_h3_k_tail_r2() -> Callable[..., torch.Tensor]:
+    import_native_extension("sm120_q64")
+    return resolve_mixed_attention_operator("sm120_h3_k_tail_r2_probability")
+
+
+@lru_cache(maxsize=1)
 def _load_h3_route() -> Callable[..., tuple[torch.Tensor, ...]]:
     import_native_extension("sm120_q64")
     return resolve_mixed_attention_operator("sm120_h3_route_precision")
@@ -164,6 +176,30 @@ def sm120_h3_draft_probability(
     k_pool: torch.Tensor,
 ) -> torch.Tensor:
     return _load_h3_draft()(q_pool, k_pool)
+
+
+def sm120_h3_k_tail_r1_probability(
+    q_pool: torch.Tensor,
+    k_pool: torch.Tensor,
+    packed_k: torch.Tensor,
+    valid_counts: torch.Tensor,
+    prefix_blocks: int,
+) -> torch.Tensor:
+    return _load_h3_k_tail_r1()(
+        q_pool, k_pool, packed_k, valid_counts, prefix_blocks
+    )
+
+
+def sm120_h3_k_tail_r2_probability(
+    q_pool: torch.Tensor,
+    k_pool: torch.Tensor,
+    packed_k: torch.Tensor,
+    valid_counts: torch.Tensor,
+    prefix_blocks: int,
+) -> torch.Tensor:
+    return _load_h3_k_tail_r2()(
+        q_pool, k_pool, packed_k, valid_counts, prefix_blocks
+    )
 
 
 def sm120_h3_route_precision(
@@ -401,6 +437,11 @@ __all__ = [
     "prepare_h3_sm120_operands",
     "prepare_mxfp8",
     "prepare_q64_nvfp4",
+    "sm120_h3_draft_probability",
+    "sm120_h3_k_tail_r1_probability",
+    "sm120_h3_k_tail_r2_probability",
+    "sm120_h3_materialize_route",
+    "sm120_h3_route_precision",
     "sm120_q64_fp16_attention",
     "sm120_q64_fp16_kernel_metadata",
     "sm120_q64_int8_fp16_attention",
@@ -409,7 +450,4 @@ __all__ = [
     "sm120_q64_nv_int8_fp16_attention",
     "sm120_q64_nv_mxfp8_fp16_attention",
     "sm120_q64_nvfp4_fp16_attention",
-    "sm120_h3_draft_probability",
-    "sm120_h3_materialize_route",
-    "sm120_h3_route_precision",
 ]

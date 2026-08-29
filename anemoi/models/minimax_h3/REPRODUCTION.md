@@ -117,7 +117,7 @@ Python ABI. Temporary objects and runtime caches default to `/dev/shm`.
 For an SM120 build, select the native component and architecture explicitly:
 
 ```bash
-MPA_BUILD_COMPONENTS=sm89,sm120_q64 \
+MPA_BUILD_COMPONENTS=sm120 \
 MPA_TORCH_CUDA_ARCH_LIST=12.0a \
 scripts/build_attention_cuda.sh
 ```
@@ -181,11 +181,11 @@ scripts/run_minimax_h3.sh \
 
 ## MPA configuration
 
-The launcher selects the released Q64 policy by GPU architecture: SM89 uses
-[`examples/minimax-h3/mpa-ragged2d-mixed.yaml`](../../../examples/minimax-h3/mpa-ragged2d-mixed.yaml),
-while SM120 uses pure INT8 from
-[`examples/minimax-h3/mpa-sm120-q64-int8.yaml`](../../../examples/minimax-h3/mpa-sm120-q64-int8.yaml).
-Reference the SM89 policy explicitly with:
+The launcher applies one architecture-neutral Q64 pure-INT8 policy on SM89 and
+SM120. Runtime device capability selects the native backend. The canonical
+configuration is
+[`examples/minimax-h3/mpa-ragged2d-mixed.yaml`](../../../examples/minimax-h3/mpa-ragged2d-mixed.yaml).
+Reference it explicitly with:
 
 ```bash
 scripts/run_minimax_h3.sh \
@@ -194,8 +194,8 @@ scripts/run_minimax_h3.sh \
   --mpa-config examples/minimax-h3/mpa-ragged2d-mixed.yaml
 ```
 
-The SM120 pure-INT8 default can be stated explicitly without adding another
-candidate name:
+The SM120-named file is a compatibility alias with the same parsed policy. For
+example:
 
 ```bash
 scripts/run_minimax_h3.sh \
@@ -208,45 +208,41 @@ Copy the file before changing an experiment:
 
 ```bash
 cp examples/minimax-h3/mpa-ragged2d-mixed.yaml \
-  /tmp/my-mpa-config.yaml
+  .codex_tmp/my-mpa-config.yaml
 
 scripts/run_minimax_h3.sh \
   mpa-ragged2d-mixed \
   outputs/minimax-h3/mpa-custom \
-  --mpa-config /tmp/my-mpa-config.yaml
+  --mpa-config .codex_tmp/my-mpa-config.yaml
 ```
 
-The YAML controls query geometry, base and per-layer sparsity, retained-block
-precision phases, route scoring, and dense-first steps/layers. Unknown fields
-and invalid ranges are rejected instead of being silently ignored.
+The stable YAML controls query geometry, base and per-layer sparsity,
+retained-block precision, and dense-first steps/layers. It uses the same field
+set as `SparseConfig` and `QuantConfig`, plus the H3 adapter's dense schedule.
+Unknown fields and invalid ranges are rejected.
 
 The fields have the following meanings:
 
 | Field | Meaning |
 | --- | --- |
 | `query_block_size` | Logical query block size, either `64` or `128`. Q128 selects the SM120 path and is rejected on SM89. |
-| `prefix_kv_precision`, `prefix_query_precision` | Prefix K/V and prefix-query arithmetic precision: `auto`, `fp16`, `mxfp8`, `nvfp4`, or `int8`. |
-| `sparsity_ratio` | Fraction of routed video block pairs dropped in MPA layers that are not covered by `layer_sparsity_bands`. The released value `0.88` retains approximately 12% of the block pairs. The router rounds the retained count and always keeps at least one pair. Missing mandatory anchors replace the weakest ordinary edges in the lowest configured precision, so anchors do not expand the retained budget. |
-| `layer_sparsity_bands` | Per-layer overrides written as `[first, last, sparsity]`. Layer ranges are zero-based and half-open: `[18, 34, 0.82]` applies 82% sparsity to layers 18 through 33. Bands must be sorted, non-overlapping, and within the 50-layer transformer stack. Layers outside the bands use `sparsity_ratio`. |
-| `fp8_ratio` | SM89 target fraction of retained sparse block pairs assigned to FP8. |
-| `nvfp4_ratio`, `int8_ratio`, `mxfp8_ratio`, `fp16_ratio` | SM120 retained-block precision fractions. They must be finite, nonnegative, and sum to one; INT8 and MXFP8 are alternative middle phases. On SM89, `fp16_ratio` instead completes the positive FP8/FP16 pair. |
-| `layer_precision_bands` | Optional SM120 per-layer overrides written as `[first, last, NVFP4, INT8, [MXFP8,] FP16]`; each band must sum to one. |
-| `enable_anchors` | Keep mandatory same-frame adjacency anchors. An anchor already selected by DraftMap keeps its precision; a missing anchor replaces the weakest ordinary edge in the lowest configured precision budget. Configurations whose lowest-precision budget is smaller than the static anchor set are rejected. The SM89 and SM120 Q64 production presets enable anchors. |
-| `diag_jensen` | Boolean switch for the optional diagonal-Jensen second-moment correction. `false` uses the fixed pooled-QK row-softmax probability score; `true` adds the correction. |
+| `prefix_kv_precision`, `prefix_query_precision` | Prefix K/V and prefix-query arithmetic precision. The production value is `int8` on both SM89 and SM120. Unsupported architecture/precision combinations are rejected before kernel launch. |
+| `sparsity_ratio` | Fraction of routed video block pairs dropped outside `layer_sparsity_bands`. The frozen base is `0.80`. |
+| `layer_sparsity_bands` | Zero-based, half-open per-layer overrides. The canonical file inherits the calibrated L2–L49 Mean20 schedule from `SparseConfig`; its average sparse-layer sparsity is exactly `0.80` (20% keep). |
+| `nvfp4_ratio`, `int8_ratio`, `fp16_ratio` | Stable retained-block precision fractions. They must be finite, nonnegative, and sum to one. The production value is pure INT8. SM89 accepts only INT8/FP16; NVFP4 requires SM120. |
 | `dense_first_steps` | Number of initial denoising steps that use original-dtype dense SDPA for every transformer layer. The released value is 10. |
 | `dense_first_layers` | Number of leading transformer layers that remain dense at every denoising step. With value 2, zero-based layers 0 and 1 remain dense after the initial dense-only steps. |
 
 The dense guards take precedence over sparsity settings: a call selected by
-`dense_first_steps` or `dense_first_layers` does not enter the sparse FP8/FP16
+`dense_first_steps` or `dense_first_layers` does not enter the sparse INT8
 path. The resolved policy, including the derived average sparse-layer ratio, is
 available through `--print-config` and is recorded with the run artifacts.
 
 For a precision-only ablation, command-line overrides are also available and
 take precedence over the YAML file.
 
-The released SM89 default is FP8/FP16 = 0.8/0.2; the released SM120 default is
-Q64 pure INT8. An SM89 ablation must provide both positive ratios and they must
-sum to one:
+The production default on both architectures is Q64 pure INT8. A legacy SM89
+mixed-phase CLI ablation must provide two positive ratios that sum to one:
 
 ```bash
 scripts/run_minimax_h3.sh \
@@ -256,3 +252,13 @@ scripts/run_minimax_h3.sh \
 ```
 
 Do not report an overridden split as the released default.
+
+On SM89, both the portable `int8_ratio` and legacy routed-video `fp8_ratio`
+name the established low arithmetic: Q/K use symmetric INT8 tensor-core
+operands and V uses E4M3. Prefix K/V reuses those already prepared K/V tensors,
+while prefix queries use direct strided Q64 quantization and a dense-sequential
+specialization of the same production phase body. Pure INT8 dispatches the
+existing no-FP16 specialization, and no dense block-ID matrix is allocated.
+
+Historical ablations use a separate private experimental schema. The release
+runner accepts only the stable fields documented above.

@@ -1,7 +1,11 @@
 import hashlib
-from pathlib import Path
+import os
+import runpy
+import sys
 import unittest
-
+from pathlib import Path
+from types import ModuleType
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,9 +32,7 @@ class SM120Q64BuildTests(unittest.TestCase):
     def test_sm120_native_route_is_architecture_owned_and_registered(self) -> None:
         setup = (ROOT / "setup.py").read_text()
         api = (ROOT / "csrc/attention/cuda/sm120/api.h").read_text()
-        bindings = (
-            ROOT / "csrc/attention/cuda/sm120/bindings.cpp"
-        ).read_text()
+        bindings = (ROOT / "csrc/attention/cuda/sm120/bindings.cpp").read_text()
         source = ROOT / "csrc/attention/cuda/sm120/h3_route_precision.cu"
         self.assertTrue(source.is_file())
         self.assertIn('_source(sm120 / "h3_route_precision.cu")', setup)
@@ -39,9 +41,7 @@ class SM120Q64BuildTests(unittest.TestCase):
             self.assertIn("sm120_h3_materialize_route", registered)
         route = source.read_text()
         self.assertIn("std::optional<torch::Tensor> anchors", api)
-        self.assertIn(
-            "Tensor? anchors, Tensor? anchor_ids, int anchor_count", bindings
-        )
+        self.assertIn("Tensor? anchors, Tensor? anchor_ids, int anchor_count", bindings)
         self.assertIn("apply_anchor_budget_kernel", route)
         self.assertIn("anchor_ids->data_ptr<int>()", route)
         self.assertIn("id_index < anchor_count", route)
@@ -50,22 +50,19 @@ class SM120Q64BuildTests(unittest.TestCase):
     def test_sm120_fp16_draft_is_architecture_owned_and_registered(self) -> None:
         setup = (ROOT / "setup.py").read_text()
         api = (ROOT / "csrc/attention/cuda/sm120/api.h").read_text()
-        bindings = (
-            ROOT / "csrc/attention/cuda/sm120/bindings.cpp"
-        ).read_text()
+        bindings = (ROOT / "csrc/attention/cuda/sm120/bindings.cpp").read_text()
         source = ROOT / "csrc/attention/cuda/sm120/h3_draft_probability.cu"
         self.assertTrue(source.is_file())
         self.assertIn('_source(sm120 / "h3_draft_probability.cu")', setup)
         for registered in (api, bindings):
             self.assertIn("sm120_h3_draft_probability", registered)
+            self.assertIn("sm120_h3_k_tail_r1_probability", registered)
+            self.assertIn("sm120_h3_k_tail_r2_probability", registered)
 
     def test_donor_first_h3_preparation_keeps_k32_staging_and_cooperative_metadata(
         self,
     ) -> None:
-        source = (
-            ROOT
-            / "csrc/attention/cuda/sm120/q128_microscaling_preparation.cu"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm120/q128_microscaling_preparation.cu").read_text()
         self.assertIn("prepare_h3_qk_microscaling_kernel", source)
         self.assertIn("prepare_h3_v_microscaling_kernel", source)
         self.assertIn("value_stage_tokens = 32", source)
@@ -76,27 +73,19 @@ class SM120Q64BuildTests(unittest.TestCase):
         self.assertIn("staged_slot_valid", source)
         self.assertNotIn("half tile[64][128]", source)
 
-        bindings = (
-            ROOT / "csrc/attention/cuda/sm120/bindings.cpp"
-        ).read_text()
+        bindings = (ROOT / "csrc/attention/cuda/sm120/bindings.cpp").read_text()
         api = (ROOT / "csrc/attention/cuda/sm120/api.h").read_text()
         for registered in (bindings, api):
             self.assertIn("prepare_h3_sm120_operands", registered)
 
     def test_raster_preparation_accepts_native_sm120_builds(self) -> None:
-        source = (
-            ROOT / "csrc/attention/cuda/sm89/raster_preprocess.cu"
-        ).read_text()
-        devices = (
-            ROOT / "csrc/attention/cuda/common/execution_device.cuh"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm89/raster_preprocess.cu").read_text()
+        devices = (ROOT / "csrc/attention/cuda/common/execution_device.cuh").read_text()
         self.assertIn("sm89_or_sm120_execution_device(properties)", source)
         self.assertIn("properties->major == 12 && properties->minor == 0", devices)
 
     def test_h3_output_assembly_accepts_native_sm120_builds(self) -> None:
-        source = (
-            ROOT / "csrc/attention/cuda/sm89/output_assembly.cu"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm89/output_assembly.cu").read_text()
         start = source.index("assemble_h3_k64_output")
         body = source[start : source.index("return output;", start)]
         self.assertIn("sm89_or_sm120_execution_device(properties)", body)
@@ -115,25 +104,23 @@ class SM120Q64BuildTests(unittest.TestCase):
         self.assertIn("torch::IntArrayRef count_shape(count_dims)", host)
 
     def test_three_phase_nvfp4_uses_its_unpadded_v_stride(self) -> None:
-        source = (
-            ROOT / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl").read_text()
         self.assertIn("const uint32_t nv_v_stride", source)
         self.assertEqual(source.count("nv_v_stride / 2"), 2)
 
     def test_q128_nvfp4_localizes_only_the_project_owned_phase(self) -> None:
-        calibration = (
-            ROOT
-            / "anemoi/models/minimax_h3/configs/nvfp4_tensor_scales_sm120.json"
+        calibration = ROOT / "anemoi/models/minimax_h3/configs/nvfp4_tensor_scales_sm120.json"
+        package_config = (ROOT / "pyproject.toml").read_text()
+        self.assertIn(
+            '"anemoi.models.minimax_h3" = ["assets/*.pt", "configs/*.json"]',
+            package_config,
         )
         self.assertEqual(
             hashlib.sha256(calibration.read_bytes()).hexdigest(),
             "ef5413c53e459b8210c8fe3054a5462310f050ebc8a63e5d20a397a90627d455",
         )
         instantiation = (
-            ROOT
-            / "csrc/attention/cuda/sm120/instantiations/"
-            "inst_q128_k64_d128_nvfp4.cu"
+            ROOT / "csrc/attention/cuda/sm120/instantiations/inst_q128_k64_d128_nvfp4.cu"
         ).read_text()
         self.assertIn("#define MPA_LOW4_NVFP4 1", instantiation)
         self.assertIn('#include "../q64_attention.cuh"', instantiation)
@@ -141,48 +128,35 @@ class SM120Q64BuildTests(unittest.TestCase):
         self.assertIn("mma_m16n8k64_nvfp4", mma)
         self.assertIn("m16n8k64.row.col.kind::mxf4nvf4", mma)
         self.assertIn(".f32.e2m1.e2m1.f32.ue4m3", mma)
-        source = (
-            ROOT / "csrc/attention/cuda/sm120/q64_attention.cuh"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm120/q64_attention.cuh").read_text()
         start = source.index("void compute_nvfp4_qk")
         end = source.index("prepare_nvfp4_probability", start)
         helper = source[start:end]
         self.assertNotIn("compute_int_qk", helper)
         preparation = (
-            ROOT
-            / "csrc/attention/cuda/sm120/q128_microscaling_preparation.cu"
+            ROOT / "csrc/attention/cuda/sm120/q128_microscaling_preparation.cu"
         ).read_text()
         self.assertIn("prepare_q128_nvfp4", preparation)
 
     def test_q128_nvfp4_k_permutation_makes_score_to_p_lane_local(self) -> None:
         def permute(index: int) -> int:
             local = index % 32
-            return (
-                index - local
-                + (local // 8) * 2
-                + ((local % 8) // 2) * 8
-                + local % 2
-            )
+            return index - local + (local // 8) * 2 + ((local % 8) // 2) * 8 + local % 2
 
         self.assertEqual(sorted(permute(i) for i in range(64)), list(range(64)))
         self.assertEqual([permute(permute(i)) for i in range(64)], list(range(64)))
         for lane in range(4):
             first = [
-                permute(tile * 8 + lane * 2 + parity)
-                for tile in range(4)
-                for parity in range(2)
+                permute(tile * 8 + lane * 2 + parity) for tile in range(4) for parity in range(2)
             ]
             second = [
-                permute(tile * 8 + lane * 2 + parity)
-                for tile in range(4, 8)
-                for parity in range(2)
+                permute(tile * 8 + lane * 2 + parity) for tile in range(4, 8) for parity in range(2)
             ]
             self.assertEqual(first, list(range(lane * 8, lane * 8 + 8)))
             self.assertEqual(second, list(range(32 + lane * 8, 40 + lane * 8)))
 
         preparation = (
-            ROOT
-            / "csrc/attention/cuda/sm120/q128_microscaling_preparation.cu"
+            ROOT / "csrc/attention/cuda/sm120/q128_microscaling_preparation.cu"
         ).read_text()
         start = preparation.index("prepare_h3_qk_microscaling_kernel")
         end = preparation.index("prepare_h3_v_microscaling_kernel", start)
@@ -191,18 +165,13 @@ class SM120Q64BuildTests(unittest.TestCase):
         self.assertIn("const int64_t local = natural_row & 31", kernel)
         self.assertIn("((local % 8) / 2) * 8 + local % 2", kernel)
 
-        mainloop = (
-            ROOT / "csrc/attention/cuda/sm120/q64_attention.cuh"
-        ).read_text()
+        mainloop = (ROOT / "csrc/attention/cuda/sm120/q64_attention.cuh").read_text()
         start = mainloop.index("prepare_nvfp4_probability")
         end = mainloop.index("template <uint32_t HeadDim>", start)
         self.assertNotIn("__shfl_sync", mainloop[start:end])
 
     def test_h3_nvfp4_qk_preparation_quantizes_neighbor_pairs(self) -> None:
-        source = (
-            ROOT
-            / "csrc/attention/cuda/sm120/q128_microscaling_preparation.cu"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm120/q128_microscaling_preparation.cu").read_text()
         start = source.index("prepare_h3_qk_microscaling_kernel")
         end = source.index("prepare_h3_v_microscaling_kernel", start)
         kernel = source[start:end]
@@ -213,10 +182,7 @@ class SM120Q64BuildTests(unittest.TestCase):
         self.assertEqual(source.count("qk_grid, 128, 0, stream"), 1)
 
     def test_h3_nvfp4_v_preparation_reuses_k32_shared_tile(self) -> None:
-        source = (
-            ROOT
-            / "csrc/attention/cuda/sm120/q128_microscaling_preparation.cu"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm120/q128_microscaling_preparation.cu").read_text()
         start = source.index("prepare_h3_v_microscaling_kernel")
         end = source.index("void check_h3_raw_operand", start)
         kernel = source[start:end]
@@ -225,18 +191,14 @@ class SM120Q64BuildTests(unittest.TestCase):
         self.assertEqual(kernel.count("narrowed = load_narrowed_half("), 1)
 
     def test_q128_nvfp4_preparation_uses_native_pair_conversion(self) -> None:
-        source = (
-            ROOT
-            / "csrc/attention/cuda/sm120/q128_microscaling_preparation.cu"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm120/q128_microscaling_preparation.cu").read_text()
         self.assertIn("#include <cuda_fp4.h>", source)
         self.assertIn("__nv_cvt_float2_to_fp4x2", source)
         self.assertNotIn("e2m1_rne", source)
 
     def test_q128_fp16_instantiation_reuses_generic_mainloop(self) -> None:
         source = (
-            ROOT
-            / "csrc/attention/cuda/sm120/instantiations/inst_q128_k64_d128_fp16.cu"
+            ROOT / "csrc/attention/cuda/sm120/instantiations/inst_q128_k64_d128_fp16.cu"
         ).read_text()
         self.assertIn("#define MPA_CTA_Q 128", source)
         self.assertIn("#define MPA_WARP_Q 32", source)
@@ -246,28 +208,64 @@ class SM120Q64BuildTests(unittest.TestCase):
     def test_setup_declares_independent_sm120_q64_component(self) -> None:
         source = (ROOT / "setup.py").read_text()
         self.assertIn('"sm120_q64"', source)
-        self.assertIn(
-            'name="anemoi.layers.attention.mpa._cuda_sm120_q64"', source
-        )
+        self.assertIn('name="anemoi.layers.attention.mpa._cuda_sm120_q64"', source)
         self.assertIn(
             'sm120 / "instantiations" / "inst_q64_k64_d128_fp16.cu"',
             source,
         )
 
+    def test_setup_executes_component_matrix(self) -> None:
+        with patch("setuptools.setup"), patch.dict(os.environ, {"MPA_SKIP_CUDA_BUILD": "1"}):
+            setup = runpy.run_path(str(ROOT / "setup.py"))
+
+        cpp_extension = ModuleType("torch.utils.cpp_extension")
+        cpp_extension.BuildExtension = object()
+        cpp_extension.CUDAExtension = lambda **kwargs: kwargs
+        torch_utils = ModuleType("torch.utils")
+        torch_utils.cpp_extension = cpp_extension
+        torch = ModuleType("torch")
+        torch.utils = torch_utils
+        modules = {
+            "torch": torch,
+            "torch.utils": torch_utils,
+            "torch.utils.cpp_extension": cpp_extension,
+        }
+        attention = "anemoi.layers.attention.mpa._cuda_attention"
+        sm120_q64 = "anemoi.layers.attention.mpa._cuda_sm120_q64"
+        cases = (
+            ("sm89", {}, [attention], "8.9"),
+            ("sm120_q64", {}, [sm120_q64], "12.0a"),
+            ("sm120", {}, [attention, sm120_q64], "12.0a"),
+            ("sm89,sm120_q64", {}, [attention, sm120_q64], "12.0a"),
+            (
+                "sm120,sm120,sm120_q64",
+                {"MPA_CUDA_ARCH_LIST": "12.0"},
+                [attention, sm120_q64],
+                "12.0",
+            ),
+        )
+        for components, overrides, names, arch in cases:
+            environment = {
+                "MPA_SKIP_CUDA_BUILD": "0",
+                "MPA_BUILD_COMPONENTS": components,
+                **overrides,
+            }
+            with (
+                self.subTest(components=components, overrides=overrides),
+                patch.dict(os.environ, environment, clear=True),
+                patch.dict(sys.modules, modules),
+            ):
+                extensions, _ = setup["_extensions"]()
+                self.assertEqual([extension["name"] for extension in extensions], names)
+                self.assertEqual(os.environ["TORCH_CUDA_ARCH_LIST"], arch)
+
     def test_build_identity_resolves_sm120_q64(self) -> None:
-        source = (
-            ROOT / "anemoi/layers/attention/mpa/build_identity.py"
-        ).read_text()
+        source = (ROOT / "anemoi/layers/attention/mpa/build_identity.py").read_text()
         self.assertIn(
             '"sm120_q64": "anemoi.layers.attention.mpa._cuda_sm120_q64"',
             source,
         )
-
-    def test_build_script_selects_sm120a_for_sm120_q64(self) -> None:
-        source = (ROOT / "scripts/build_attention_cuda.sh").read_text()
-        self.assertIn("MPA_BUILD_COMPONENTS:-sm89", source)
-        self.assertIn("sm120_q64", source)
-        self.assertIn("12.0a", source)
+        self.assertIn("scripts/build_attention_cuda.sh", source)
 
     def test_sm120_q64_source_is_architecture_owned(self) -> None:
         root = ROOT / "csrc/attention/cuda/sm120"
@@ -277,22 +275,14 @@ class SM120Q64BuildTests(unittest.TestCase):
             "q64_attention_decl.cuh",
             "instantiations/inst_q64_k64_d128_fp16.cu",
         }
-        files = {
-            str(path.relative_to(root))
-            for path in root.rglob("*")
-            if path.is_file()
-        }
+        files = {str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()}
         self.assertTrue(expected.issubset(files))
         for path in root.rglob("*"):
             if path.suffix in {".h", ".cuh", ".cu", ".cpp"}:
                 self.assertNotIn("../sm89", path.read_text())
 
     def test_foundation_instantiates_only_all_fp16(self) -> None:
-        path = (
-            ROOT
-            / "csrc/attention/cuda/sm120/instantiations/"
-            "inst_q64_k64_d128_fp16.cu"
-        )
+        path = ROOT / "csrc/attention/cuda/sm120/instantiations/inst_q64_k64_d128_fp16.cu"
         self.assertTrue(path.is_file())
         source = path.read_text()
         self.assertIn("#define MPA_CTA_Q 64", source)
@@ -301,11 +291,7 @@ class SM120Q64BuildTests(unittest.TestCase):
         self.assertNotIn("<128, true,", source)
 
     def test_mxfp8_phase_uses_one_specialization_for_all_ratios(self) -> None:
-        path = (
-            ROOT
-            / "csrc/attention/cuda/sm120/instantiations/"
-            "inst_q64_k64_d128_mxfp8.cu"
-        )
+        path = ROOT / "csrc/attention/cuda/sm120/instantiations/inst_q64_k64_d128_mxfp8.cu"
         self.assertTrue(path.is_file())
         source = path.read_text()
         self.assertIn("#define MPA_CTA_Q 64", source)
@@ -315,11 +301,7 @@ class SM120Q64BuildTests(unittest.TestCase):
         self.assertIn("<128, true, true, false>", source)
 
     def test_q128_mxfp8_instantiation_reuses_existing_operator(self) -> None:
-        path = (
-            ROOT
-            / "csrc/attention/cuda/sm120/instantiations/"
-            "inst_q128_k64_d128_mxfp8.cu"
-        )
+        path = ROOT / "csrc/attention/cuda/sm120/instantiations/inst_q128_k64_d128_mxfp8.cu"
         self.assertTrue(path.is_file())
         source = path.read_text()
         self.assertIn("#define MPA_CTA_Q 128", source)
@@ -330,9 +312,7 @@ class SM120Q64BuildTests(unittest.TestCase):
         self.assertIn("<128, true, true, false>", source)
 
         setup = (ROOT / "setup.py").read_text()
-        bindings = (
-            ROOT / "csrc/attention/cuda/sm120/bindings.cpp"
-        ).read_text()
+        bindings = (ROOT / "csrc/attention/cuda/sm120/bindings.cpp").read_text()
         api = (ROOT / "csrc/attention/cuda/sm120/api.h").read_text()
         self.assertIn(
             'sm120 / "instantiations" / "inst_q128_k64_d128_mxfp8.cu"',
@@ -343,19 +323,15 @@ class SM120Q64BuildTests(unittest.TestCase):
 
     def test_sm89_audit_exposes_ragged_safe_pure_fp8_pipeline(self) -> None:
         instantiation = (
-            ROOT
-            / "csrc/attention/cuda/sm89/instantiations/inst_k64_d128.cu"
+            ROOT / "csrc/attention/cuda/sm89/instantiations/inst_k64_d128.cu"
         ).read_text()
-        source = (
-            ROOT / "csrc/attention/cuda/sm89/mixed_attention.cuh"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm89/mixed_attention.cuh").read_text()
         bindings = (ROOT / "csrc/attention/cuda/sm89/bindings.cpp").read_text()
 
         self.assertIn("<128, true, false, false>", instantiation)
         self.assertIn("k64_fp8_attention_forward", bindings)
         pure = source[
-            source.index("if constexpr (HasFp8)") :
-            source.index("if constexpr (HasFp16)")
+            source.index("if constexpr (HasFp8)") : source.index("if constexpr (HasFp16)")
         ]
         self.assertIn("MPA_K64_BLOCK_MODE", pure)
         self.assertIn("absolute_stage = static_cast<uint32_t>(*low_delta++)", pure)
@@ -363,11 +339,7 @@ class SM120Q64BuildTests(unittest.TestCase):
         self.assertIn("cp_async::wait_group<1>();", pure)
 
     def test_q128_int8_control_reuses_sm89_optimized_mainloop(self) -> None:
-        path = (
-            ROOT
-            / "csrc/attention/cuda/sm89/instantiations/"
-            "inst_q128_k64_d128.cu"
-        )
+        path = ROOT / "csrc/attention/cuda/sm89/instantiations/inst_q128_k64_d128.cu"
         self.assertTrue(path.is_file())
         source = path.read_text()
         self.assertIn("#define MPA_CTA_Q 128", source)
@@ -378,21 +350,16 @@ class SM120Q64BuildTests(unittest.TestCase):
             'sm89 / "instantiations" / "inst_q128_k64_d128.cu"',
             (ROOT / "setup.py").read_text(),
         )
-        bindings = (
-            ROOT / "csrc/attention/cuda/sm89/bindings.cpp"
-        ).read_text()
+        bindings = (ROOT / "csrc/attention/cuda/sm89/bindings.cpp").read_text()
         self.assertIn("q128_k64_mixed_attention_forward(", bindings)
 
     def test_q128_int8_has_pure_and_mixed_phase_isolation_symbols(self) -> None:
         instantiation = (
-            ROOT
-            / "csrc/attention/cuda/sm89/instantiations/inst_q128_k64_d128.cu"
+            ROOT / "csrc/attention/cuda/sm89/instantiations/inst_q128_k64_d128.cu"
         ).read_text()
         self.assertIn("<128, true, false, false>", instantiation)
         self.assertIn("<128, true, true, false>", instantiation)
-        bindings = (
-            ROOT / "csrc/attention/cuda/sm89/bindings.cpp"
-        ).read_text()
+        bindings = (ROOT / "csrc/attention/cuda/sm89/bindings.cpp").read_text()
         self.assertIn("q128_k64_fp8_attention_forward", bindings)
 
     def test_int8_dense_sequential_instances_reuse_the_phase_body(self) -> None:
@@ -409,18 +376,14 @@ class SM120Q64BuildTests(unittest.TestCase):
             self.assertIn("#define MPA_STORE_LSE 0", source)
             self.assertIn('#include "../q64_attention.cuh"', source)
 
-        composer = (
-            ROOT / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl"
-        ).read_text()
+        composer = (ROOT / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl").read_text()
         self.assertIn("#if MPA_DENSE_SEQUENTIAL\n        absolute_stage = 0;", composer)
         self.assertIn(
-            "#if MPA_DENSE_SEQUENTIAL\n"
-            "          absolute_stage = iteration + 1;",
+            "#if MPA_DENSE_SEQUENTIAL\n          absolute_stage = iteration + 1;",
             composer,
         )
         self.assertIn(
-            "#if MPA_DENSE_SEQUENTIAL\n"
-            "          absolute_stage = low_iterations - 1;",
+            "#if MPA_DENSE_SEQUENTIAL\n          absolute_stage = low_iterations - 1;",
             composer,
         )
         for name in (
@@ -430,67 +393,44 @@ class SM120Q64BuildTests(unittest.TestCase):
             self.assertNotIn("MPA_DENSE_SEQUENTIAL", (root / name).read_text())
 
     def test_sm89_optimized_int8_loop_is_shared_by_mixed_phase(self) -> None:
-        source = (
-            ROOT / "csrc/attention/cuda/sm89/mixed_attention.cuh"
-        ).read_text()
-        low = source[
-            source.index("if constexpr (HasFp8)") :
-            source.index("if constexpr (HasFp16)")
-        ]
+        source = (ROOT / "csrc/attention/cuda/sm89/mixed_attention.cuh").read_text()
+        low = source[source.index("if constexpr (HasFp8)") : source.index("if constexpr (HasFp16)")]
         self.assertNotIn("if constexpr (HasFp8 && !HasFp16)", low)
         self.assertNotIn("Mixed specializations retain their separate", low)
         self.assertIn("cp_async::wait_group<1>();", low)
         self.assertIn("int32_t* low_delta = low_lut;", low)
 
     def test_sm120_production_exposes_ragged_safe_pure_mx_pipeline(self) -> None:
-        production = (
-            ROOT
-            / "csrc/attention/cuda/sm120/instantiations/"
-            "inst_q64_k64_d128_mxfp8.cu"
-        )
+        production = ROOT / "csrc/attention/cuda/sm120/instantiations/inst_q64_k64_d128_mxfp8.cu"
         self.assertTrue(production.is_file())
         self.assertIn("<128, true, false, false>", production.read_text())
         self.assertFalse(
             (
-                ROOT
-                / "csrc/attention/cuda/sm120/instantiations/"
+                ROOT / "csrc/attention/cuda/sm120/instantiations/"
                 "inst_q64_k64_d128_mxfp8_pure_audit.cu"
             ).exists()
         )
-        source = (
-            ROOT
-            / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl"
-        ).read_text()
-        pure = source[
-            source.index("Shared by pure and mixed MXFP8 specializations") :
-        ]
+        source = (ROOT / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl").read_text()
+        pure = source[source.index("Shared by pure and mixed MXFP8 specializations") :]
         self.assertIn("cp_async::wait_group<1>();", pure)
         self.assertIn("absolute_stage = static_cast<uint32_t>(low_lut[iteration])", pure)
         self.assertIn("valid_k_counts[batch_id * num_physical_stages", pure)
-        bindings = (
-            ROOT / "csrc/attention/cuda/sm120/bindings.cpp"
-        ).read_text()
+        bindings = (ROOT / "csrc/attention/cuda/sm120/bindings.cpp").read_text()
         self.assertNotIn("pure_audit", bindings)
 
     def test_sm120_mx_pipeline_is_shared_by_mixed_specialization(self) -> None:
-        source = (
-            ROOT
-            / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl").read_text()
         shared = source[
-            source.index("Shared by pure and mixed MXFP8 specializations") :
-            source.index("if constexpr (HasFp16)")
+            source.index("Shared by pure and mixed MXFP8 specializations") : source.index(
+                "if constexpr (HasFp16)"
+            )
         ]
         self.assertIn("if constexpr (HasFp8)", shared)
-        self.assertNotIn(
-            "if constexpr (HasFp8 && !HasFp16)", shared
-        )
+        self.assertNotIn("if constexpr (HasFp8 && !HasFp16)", shared)
 
     def test_mxfp8_phase_uses_one_compact_route_operator(self) -> None:
         setup = (ROOT / "setup.py").read_text()
-        bindings = (
-            ROOT / "csrc/attention/cuda/sm120/bindings.cpp"
-        ).read_text()
+        bindings = (ROOT / "csrc/attention/cuda/sm120/bindings.cpp").read_text()
         api = (ROOT / "csrc/attention/cuda/sm120/api.h").read_text()
         self.assertIn(
             'sm120 / "instantiations" / "inst_q64_k64_d128_mxfp8.cu"',
@@ -503,9 +443,7 @@ class SM120Q64BuildTests(unittest.TestCase):
         self.assertIn("sm120_q64_mxfp8_attention_forward(", api)
 
     def test_mxfp8_phase_uses_block_scaled_qk_and_k64_pv(self) -> None:
-        source = (
-            ROOT / "csrc/attention/cuda/sm120/q64_attention.cuh"
-        ).read_text() + (
+        source = (ROOT / "csrc/attention/cuda/sm120/q64_attention.cuh").read_text() + (
             ROOT / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl"
         ).read_text()
         self.assertIn(
@@ -519,9 +457,7 @@ class SM120Q64BuildTests(unittest.TestCase):
         self.assertIn("absolute_stage) * (HeadDim * 2)", source)
 
     def test_q128_mxfp8_reuses_each_k_fragment_across_query_fragments(self) -> None:
-        source = (
-            ROOT / "csrc/attention/cuda/sm120/q64_attention.cuh"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm120/q64_attention.cuh").read_text()
         start = source.index("void compute_mxfp8_qk")
         end = source.index("__device__ __forceinline__ uint32_t pack_e4m3x4", start)
         helper = source[start:end]
@@ -531,33 +467,24 @@ class SM120Q64BuildTests(unittest.TestCase):
         )
         self.assertIn("uint32_t q_data[NumTilesQ][4]", helper)
         k_load = helper.index("smem_k.ldmatrix_m8n8x4")
-        qmma_loop = helper.index(
-            "for (uint32_t fq = 0; fq < NumTilesQ; ++fq)", k_load
-        )
+        qmma_loop = helper.index("for (uint32_t fq = 0; fq < NumTilesQ; ++fq)", k_load)
         self.assertLess(k_load, qmma_loop)
         self.assertIn("pack_sage_mxfp8_probability", source)
 
     def test_q128_mxfp8_consumes_both_query_fragments_in_pv(self) -> None:
-        source = (
-            ROOT / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl").read_text()
         shared = source[
-            source.index("Shared by pure and mixed MXFP8 specializations") :
-            source.index("if constexpr (HasFp16)")
+            source.index("Shared by pure and mixed MXFP8 specializations") : source.index(
+                "if constexpr (HasFp16)"
+            )
         ]
-        self.assertIn(
-            "for (uint32_t fq = 1; fq < num_tiles_q; ++fq)", shared
-        )
+        self.assertIn("for (uint32_t fq = 1; fq < num_tiles_q; ++fq)", shared)
         self.assertIn("ro[fq], rs[fq], smem_v8, v_scale_tile", shared)
 
     def test_mxfp8_probability_reuses_sm89_lane_local_packing(self) -> None:
-        source = (
-            ROOT / "csrc/attention/cuda/sm120/q64_attention.cuh"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm120/q64_attention.cuh").read_text()
         start = source.index("pack_sage_mxfp8_probability")
-        end = source.index(
-            "template <uint32_t TokenChunk, uint32_t HeadDim", start
-        )
+        end = source.index("template <uint32_t TokenChunk, uint32_t HeadDim", start)
         packing = source[start:end]
         self.assertNotIn("__shfl_sync", packing)
         for expression in (
@@ -569,9 +496,7 @@ class SM120Q64BuildTests(unittest.TestCase):
             self.assertIn(expression, packing)
 
     def test_mxfp8_phase_overlaps_v_copy_with_softmax(self) -> None:
-        source = (
-            ROOT / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl").read_text()
         low_phase = source[source.index("if constexpr (HasFp8)") :]
         overlap = low_phase.index("MXFP8 V-copy/softmax overlap")
         v_copy = low_phase.index("load_fp8_V_global_to_share<", overlap)
@@ -581,18 +506,15 @@ class SM120Q64BuildTests(unittest.TestCase):
         self.assertLess(softmax, wait)
 
     def test_mxfp8_phase_stages_k_and_v_scales_once_per_cta(self) -> None:
-        source = (
-            ROOT / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl"
-        ).read_text()
+        source = (ROOT / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl").read_text()
         self.assertIn("k_scale_tile", source)
         self.assertIn("v_scale_tile", source)
         self.assertIn("kLowScaleSmemBytes", source)
         self.assertGreaterEqual(
-            source.count(
-                "cp_async::load_128b<cp_async::PrefetchMode::kNoPrefetch>"
-            ),
+            source.count("cp_async::load_128b<cp_async::PrefetchMode::kNoPrefetch>"),
             2,
         )
+
 
 if __name__ == "__main__":
     unittest.main()

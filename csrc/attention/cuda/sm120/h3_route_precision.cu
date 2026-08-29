@@ -17,9 +17,33 @@
 
 #include "api.h"
 
+// The stable CUB route and compact-anchor algorithm is shared source, while
+// each extension keeps an architecture-owned entry point and launch tuning.
+// SM120 remains the default instantiation; the SM89 translation unit supplies
+// its own names, capability predicate, and implicit-FP16-prefix convention.
+#ifndef MPA_ROUTE_PRECISION_FUNCTION
+#define MPA_ROUTE_PRECISION_FUNCTION sm120_h3_route_precision
+#endif
+#ifndef MPA_MATERIALIZE_ROUTE_FUNCTION
+#define MPA_MATERIALIZE_ROUTE_FUNCTION sm120_h3_materialize_route
+#endif
+#ifndef MPA_ROUTE_DEVICE_OK
+#define MPA_ROUTE_DEVICE_OK(properties) \
+  ((properties)->major == 12 && (properties)->minor == 0)
+#endif
+#ifndef MPA_ROUTE_DEVICE_LABEL
+#define MPA_ROUTE_DEVICE_LABEL "SM120"
+#endif
+#ifndef MPA_ROUTE_THREADS
+#define MPA_ROUTE_THREADS 256
+#endif
+#ifndef MPA_IMPLICIT_HIGH_PREFIX
+#define MPA_IMPLICIT_HIGH_PREFIX 0
+#endif
+
 namespace {
 
-constexpr int kThreads = 256;
+constexpr int kThreads = MPA_ROUTE_THREADS;
 constexpr int kProbabilityBits = 16;
 constexpr int kMaxSegments = 1 << 16;
 constexpr int64_t kMaxGridX = 2147483647LL;
@@ -296,6 +320,8 @@ __global__ __launch_bounds__(kThreads) void materialize_physical_route_kernel(
   const int middle = middle_counts[row];
   const int high = has_high ? high_counts[row] : 0;
   const int active = low + middle + high;
+  const bool implicit_high_prefix =
+      MPA_IMPLICIT_HIGH_PREFIX && prefix_phase == 2;
   const int prefix_position = prefix_first
       ? 0
       : (prefix_phase == 0
@@ -311,7 +337,7 @@ __global__ __launch_bounds__(kThreads) void materialize_physical_route_kernel(
   for (int position = threadIdx.x; position < active;
        position += blockDim.x) {
     int destination = position * factor;
-    if (destination >= prefix_position) {
+    if (!implicit_high_prefix && destination >= prefix_position) {
       destination += prefix_blocks;
     }
     const int first =
@@ -324,9 +350,11 @@ __global__ __launch_bounds__(kThreads) void materialize_physical_route_kernel(
       }
     }
   }
-  for (int prefix = threadIdx.x; prefix < prefix_blocks;
-       prefix += blockDim.x) {
-    physical_ids[row * physical_columns + prefix_position + prefix] = prefix;
+  if (!implicit_high_prefix) {
+    for (int prefix = threadIdx.x; prefix < prefix_blocks;
+         prefix += blockDim.x) {
+      physical_ids[row * physical_columns + prefix_position + prefix] = prefix;
+    }
   }
   if (threadIdx.x == 0) {
     physical_low_counts[row] =
@@ -343,7 +371,7 @@ __global__ __launch_bounds__(kThreads) void materialize_physical_route_kernel(
 }  // namespace
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-sm120_h3_route_precision(
+MPA_ROUTE_PRECISION_FUNCTION(
     torch::Tensor probability,
     int64_t n16_value,
     int64_t n8_value,
@@ -418,8 +446,8 @@ sm120_h3_route_precision(
   const cudaDeviceProp* properties =
       at::cuda::getDeviceProperties(probability.get_device());
   TORCH_CHECK(
-      properties->major == 12 && properties->minor == 0,
-      "sm120_h3_route_precision requires SM120");
+      MPA_ROUTE_DEVICE_OK(properties),
+      "native H3 route requires ", MPA_ROUTE_DEVICE_LABEL);
 
   const int segment_items = static_cast<int>(segment_items_value);
   const int segments = static_cast<int>(segments_value);
@@ -528,7 +556,7 @@ sm120_h3_route_precision(
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-sm120_h3_materialize_route(
+MPA_MATERIALIZE_ROUTE_FUNCTION(
     torch::Tensor logical_ids,
     torch::Tensor low_counts,
     torch::Tensor middle_counts,
@@ -560,7 +588,6 @@ sm120_h3_materialize_route(
       "query_block_size must be 64 or 128");
   const int prefix_blocks =
       require_nonnegative_int32(prefix_blocks_value, "prefix_blocks");
-  TORCH_CHECK(prefix_blocks > 0, "prefix_blocks must be positive");
   const int prefix_phase =
       require_nonnegative_int32(prefix_phase_value, "prefix_phase");
   TORCH_CHECK(prefix_phase < 3, "prefix_phase must be 0, 1, or 2");
@@ -618,3 +645,10 @@ sm120_h3_materialize_route(
       physical_middle_counts,
       physical_high_counts};
 }
+
+#undef MPA_ROUTE_PRECISION_FUNCTION
+#undef MPA_MATERIALIZE_ROUTE_FUNCTION
+#undef MPA_ROUTE_DEVICE_OK
+#undef MPA_ROUTE_DEVICE_LABEL
+#undef MPA_ROUTE_THREADS
+#undef MPA_IMPLICIT_HIGH_PREFIX

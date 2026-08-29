@@ -5,6 +5,32 @@
 #include <optional>
 #include <tuple>
 
+// Stable global DraftMap route with compact Anchor correction. The returned
+// logical IDs are phase-packed but do not yet contain physical prefix blocks.
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+sm89_h3_route_precision(
+    torch::Tensor probability,
+    int64_t n16,
+    int64_t n8,
+    int64_t n4,
+    std::optional<torch::Tensor> anchors,
+    std::optional<torch::Tensor> anchor_ids,
+    int64_t anchor_count);
+
+// SM89 Q64 physical lowering. INT8 prefix blocks are explicit at the front of
+// the low phase; FP16 prefix blocks retain the established implicit ordering.
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+sm89_h3_materialize_route(
+    torch::Tensor logical_ids,
+    torch::Tensor low_counts,
+    torch::Tensor middle_counts,
+    torch::Tensor high_counts,
+    int64_t query_block_size,
+    int64_t prefix_blocks,
+    int64_t prefix_phase,
+    bool prefix_first,
+    bool has_high);
+
 // Native Q64 x K64 FP16 attention used by both contiguous-1D and compact
 // aligned-8x8 layouts. block_ids are absolute K64 block indices; every
 // physical block has an explicit valid-token count so partial compact blocks
@@ -21,8 +47,9 @@ std::tuple<torch::Tensor, torch::Tensor> k64_fp16_attention_forward(
 // Native Q64xK64 mixed executor. Q/K use the project INT8 tensor-core
 // representation and V uses E4M3; selected rescue blocks consume the exact
 // FP16 operands. The two list tensors must alias one compact absolute-stage
-// list: [FP8 video stages][FP16 video stages][unused]. Exact prefix stages are
-// implicit in the FP16 count and do not occupy list slots.
+// list: [INT8 prefix stages when selected][FP8 video stages]
+// [FP16 video stages][unused]. Exact FP16 prefix stages remain implicit in the
+// FP16 count and do not occupy list slots.
 std::tuple<torch::Tensor, torch::Tensor> k64_mixed_attention_forward(
     torch::Tensor q8,
     torch::Tensor k8,
@@ -85,6 +112,19 @@ std::tuple<torch::Tensor, torch::Tensor> q128_k64_fp8_attention_forward(
     torch::Tensor valid_k_counts,
     double softmax_scale);
 
+// Dense-sequential prefix-query provider using the same SM89 INT8-QK/E4M3-PV
+// phase body and the already prepared full K/V operands.
+torch::Tensor sm89_q64_prefix_int8_attention_forward(
+    torch::Tensor q8,
+    torch::Tensor k8,
+    torch::Tensor v8,
+    torch::Tensor q_scale,
+    torch::Tensor k_scale,
+    torch::Tensor v_scale,
+    torch::Tensor valid_k_counts,
+    int64_t prefix_tokens,
+    double softmax_scale);
+
 // Integration-private adaptive-2D preparation.  A cached logical-to-physical
 // token map drives one fused BF16/FP16 -> FP16 Q/K/V pack into K64 blocks;
 // invalid physical lanes are written as exact positive zero.
@@ -113,7 +153,8 @@ pack_h3_k64_qkv_fp16(
 torch::Tensor assemble_h3_k64_output(
     torch::Tensor prefix_output_bhsd,
     torch::Tensor video_output_bhsd_fp16,
-    torch::Tensor video_inverse_indices);
+    torch::Tensor video_inverse_indices,
+    std::optional<at::ScalarType> output_dtype);
 
 std::tuple<torch::Tensor, torch::Tensor> preprocess_v_fp8(
     torch::Tensor value);

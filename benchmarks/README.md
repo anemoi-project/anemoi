@@ -19,3 +19,7 @@ Each benchmark should report:
 ## Draft Attention Smoke Commands
 
 The current end-to-end benchmark entry point is `scripts/run_minimax_h3.sh`.
+
+The capture-based operator validation for SM89 INT8 prefix Q/K/V and native
+fixed-budget Anchor routing is recorded in
+[`docs/sm89_int8_prefix_anchor.md`](../docs/sm89_int8_prefix_anchor.md).

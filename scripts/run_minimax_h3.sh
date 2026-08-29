@@ -74,7 +74,6 @@ export MPA_PYTHON="${python_bin}"
 single_process=0
 height_set=0
 width_set=0
-mpa_config_set=0
 for argument in "$@"; do
   if [[ "${argument}" == "--decode-only" || "${argument}" == "--print-config" ]]; then
     single_process=1
@@ -82,7 +81,6 @@ for argument in "$@"; do
   case "${argument}" in
     --height|--height=*) height_set=1 ;;
     --width|--width=*) width_set=1 ;;
-    --mpa-config|--mpa-config=*) mpa_config_set=1 ;;
   esac
 done
 if (( height_set != width_set )); then
@@ -90,10 +88,8 @@ if (( height_set != width_set )); then
   exit 2
 fi
 
-sm120_selected=0
 if [[ "${candidate}" == "mpa-ragged2d-mixed" && "${single_process}" == "0" ]]; then
   if "${python_bin}" -c 'import torch; raise SystemExit(torch.cuda.get_device_capability(0) != (12, 0))'; then
-    sm120_selected=1
     export MPA_BUILD_COMPONENTS="${MPA_BUILD_COMPONENTS:-sm89,sm120_q64}"
     build_revision="$(git -C "${repo_root}" rev-parse --short=12 HEAD 2>/dev/null || printf source)"
     export MPA_BUILD_ROOT="${MPA_BUILD_ROOT:-${TMPDIR}/anemoi-mpa-build-sm120-${UID}-${build_revision}}"
@@ -109,11 +105,6 @@ runner_args=(
   --checkpoint "${H3_DIT_CHECKPOINT}"
   "$@"
 )
-if (( sm120_selected == 1 && mpa_config_set == 0 )); then
-  runner_args+=(
-    --mpa-config "${repo_root}/examples/minimax-h3/mpa-sm120-q64-int8.yaml"
-  )
-fi
 
 cd "${repo_root}"
 if [[ "${single_process}" == "1" ]]; then

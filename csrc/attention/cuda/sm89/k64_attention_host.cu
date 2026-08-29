@@ -474,3 +474,99 @@ std::tuple<torch::Tensor, torch::Tensor> q128_k64_fp8_attention_forward(
       q8, k8, v8, block_ids, block_counts, q_scale, k_scale, v_scale,
       valid_k_counts, softmax_scale);
 }
+
+torch::Tensor sm89_q64_prefix_int8_attention_forward(
+    torch::Tensor q8,
+    torch::Tensor k8,
+    torch::Tensor v8,
+    torch::Tensor q_scale,
+    torch::Tensor k_scale,
+    torch::Tensor v_scale,
+    torch::Tensor valid_k_counts,
+    int64_t prefix_tokens,
+    double softmax_scale) {
+  for (const auto& item : {
+           std::pair<const torch::Tensor*, const char*>(&q8, "q8"),
+           std::pair<const torch::Tensor*, const char*>(&k8, "k8"),
+           std::pair<const torch::Tensor*, const char*>(&v8, "v8"),
+           std::pair<const torch::Tensor*, const char*>(&q_scale, "q_scale"),
+           std::pair<const torch::Tensor*, const char*>(&k_scale, "k_scale"),
+           std::pair<const torch::Tensor*, const char*>(&v_scale, "v_scale"),
+           std::pair<const torch::Tensor*, const char*>(
+               &valid_k_counts, "valid_k_counts")}) {
+    check_cuda_contiguous(*item.first, item.second);
+    check_same_device(*item.first, q8, item.second);
+  }
+  TORCH_CHECK(
+      q8.scalar_type() == at::ScalarType::Char &&
+          k8.scalar_type() == at::ScalarType::Char,
+      "q8/k8 must be int8");
+  TORCH_CHECK(
+      v8.scalar_type() == at::ScalarType::Float8_e4m3fn,
+      "v8 must be float8_e4m3fn");
+  TORCH_CHECK(
+      q8.dim() == 4 && q8.size(0) > 0 && q8.size(1) > 0 &&
+          q8.size(2) > 0 && q8.size(2) % 64 == 0 && q8.size(3) == 128,
+      "q8 must have padded shape [B,Hq,Q64,128]");
+  TORCH_CHECK(
+      k8.dim() == 4 && k8.size(0) == q8.size(0) && k8.size(1) > 0 &&
+          k8.size(2) > 0 && k8.size(2) % 64 == 0 && k8.size(3) == 128 &&
+          q8.size(1) % k8.size(1) == 0,
+      "k8 must have compatible [B,Hkv,K64,128] layout");
+  TORCH_CHECK(
+      prefix_tokens > 0 && prefix_tokens <= q8.size(2) &&
+          prefix_tokens > q8.size(2) - 64,
+      "prefix_tokens must select the nonempty final-padded Q64 prefix");
+  TORCH_CHECK(
+      std::isfinite(softmax_scale) && softmax_scale > 0.0,
+      "softmax_scale must be finite and positive");
+
+  const int64_t query_blocks = q8.size(2) / 64;
+  const int64_t key_blocks = k8.size(2) / 64;
+  TORCH_CHECK(
+      v8.dim() == 4 && v8.size(0) == q8.size(0) &&
+          v8.size(1) == k8.size(1) && v8.size(2) == 128 &&
+          v8.size(3) >= ((k8.size(2) + 127) / 128) * 128 &&
+          v8.size(3) % 128 == 0,
+      "v8 must have verified [B,Hkv,128,padded_K] layout");
+  TORCH_CHECK(
+      q_scale.scalar_type() == at::ScalarType::Float &&
+          q_scale.sizes() == torch::IntArrayRef(
+              {q8.size(0), q8.size(1), query_blocks}),
+      "q_scale must have shape [B,Hq,Q/64]");
+  TORCH_CHECK(
+      k_scale.scalar_type() == at::ScalarType::Float &&
+          k_scale.sizes() == torch::IntArrayRef(
+              {q8.size(0), k8.size(1), key_blocks}),
+      "k_scale must have shape [B,Hkv,K/64]");
+  TORCH_CHECK(
+      v_scale.scalar_type() == at::ScalarType::Float &&
+          v_scale.sizes() == torch::IntArrayRef(
+              {q8.size(0), k8.size(1), 128}),
+      "v_scale must have shape [B,Hkv,128]");
+  TORCH_CHECK(
+      valid_k_counts.scalar_type() == at::ScalarType::Int &&
+          valid_k_counts.sizes() ==
+              torch::IntArrayRef({q8.size(0), key_blocks}),
+      "valid_k_counts must have shape [B,K/64]");
+
+  auto output = torch::empty(
+      q8.sizes(), q8.options().dtype(at::ScalarType::Half));
+  c10::cuda::CUDAGuard device_guard(q8.device());
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream(q8.get_device());
+  launch_mixed_attention_sm89_k64_int8_dense<128, true, false, false>(
+      q8.data_ptr<int8_t>(), k8.data_ptr<int8_t>(),
+      reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr()),
+      nullptr, nullptr, nullptr, nullptr,
+      reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+      nullptr, nullptr, nullptr, nullptr,
+      q_scale.data_ptr<float>(), k_scale.data_ptr<float>(),
+      v_scale.data_ptr<float>(), valid_k_counts.data_ptr<int32_t>(),
+      nullptr, 0, static_cast<uint32_t>(q8.size(0)),
+      static_cast<uint32_t>(q8.size(2)), static_cast<uint32_t>(k8.size(2)),
+      static_cast<uint32_t>(v8.size(3)), static_cast<uint32_t>(q8.size(1)),
+      static_cast<uint32_t>(k8.size(1)), static_cast<float>(softmax_scale),
+      stream);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return output.narrow(2, 0, prefix_tokens);
+}

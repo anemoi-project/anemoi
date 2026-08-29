@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-from pathlib import Path
 import sys
 import sysconfig
-
+from pathlib import Path
 
 _MODULES = {
     "attention": "anemoi.layers.attention.mpa._cuda_attention",
@@ -35,8 +34,7 @@ def import_native_extension(component: str):
     expected = _extension_path(component).resolve()
     if not expected.is_file():
         raise RuntimeError(
-            f"{module_name} is not built for this Python ABI; run "
-            f"scripts/build_{component}_cuda.sh"
+            f"{module_name} is not built for this Python ABI; run scripts/build_attention_cuda.sh"
         )
     existing = sys.modules.get(module_name)
     if existing is not None:

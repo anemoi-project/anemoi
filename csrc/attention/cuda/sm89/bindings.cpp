@@ -6,6 +6,16 @@
 #include "api.h"
 
 TORCH_LIBRARY_FRAGMENT(mixed_attention, m) {
+  m.def(
+      "sm89_h3_route_precision(Tensor probability, int n16, int n8, int n4, "
+      "Tensor? anchors, Tensor? anchor_ids, int anchor_count) "
+      "-> (Tensor, Tensor, Tensor, Tensor)");
+  m.def(
+      "sm89_h3_materialize_route("
+      "Tensor logical_ids, Tensor low_counts, Tensor middle_counts, "
+      "Tensor high_counts, int query_block_size, int prefix_blocks, "
+      "int prefix_phase, bool prefix_first, bool has_high) "
+      "-> (Tensor, Tensor, Tensor, Tensor)");
   m.def("preprocess_v_fp8(Tensor value) -> (Tensor, Tensor)");
   m.def(
       "k64_fp16_attention_forward("
@@ -37,15 +47,23 @@ TORCH_LIBRARY_FRAGMENT(mixed_attention, m) {
       "Tensor block_counts, Tensor q_scale, Tensor k_scale, Tensor v_scale, "
       "Tensor valid_k_counts, float softmax_scale) -> (Tensor, Tensor)");
   m.def(
+      "sm89_q64_prefix_int8_attention_forward("
+      "Tensor q8, Tensor k8, Tensor v8, Tensor q_scale, Tensor k_scale, "
+      "Tensor v_scale, Tensor valid_k_counts, int prefix_tokens, "
+      "float softmax_scale) -> Tensor");
+  m.def(
       "pack_h3_k64_qkv_fp16(Tensor query, Tensor key, Tensor value, "
       "Tensor video_token_indices, Tensor video_slot_valid, int prefix_tokens) "
       "-> (Tensor, Tensor, Tensor)");
   m.def(
       "assemble_h3_k64_output(Tensor prefix_output_bhsd, "
-      "Tensor video_output_bhsd_fp16, Tensor video_inverse_indices) -> Tensor");
+      "Tensor video_output_bhsd_fp16, Tensor video_inverse_indices, "
+      "ScalarType? output_dtype=None) -> Tensor");
 }
 
 TORCH_LIBRARY_IMPL(mixed_attention, CUDA, m) {
+  m.impl("sm89_h3_route_precision", &sm89_h3_route_precision);
+  m.impl("sm89_h3_materialize_route", &sm89_h3_materialize_route);
   m.impl("preprocess_v_fp8", &preprocess_v_fp8);
   m.impl("k64_fp16_attention_forward", &k64_fp16_attention_forward);
   m.impl("k64_mixed_attention_forward", &k64_mixed_attention_forward);
@@ -56,6 +74,9 @@ TORCH_LIBRARY_IMPL(mixed_attention, CUDA, m) {
   m.impl(
       "q128_k64_fp8_attention_forward",
       &q128_k64_fp8_attention_forward);
+  m.impl(
+      "sm89_q64_prefix_int8_attention_forward",
+      &sm89_q64_prefix_int8_attention_forward);
   m.impl("pack_h3_k64_qkv_fp16", &pack_h3_k64_qkv_fp16);
   m.impl("assemble_h3_k64_output", &assemble_h3_k64_output);
 }

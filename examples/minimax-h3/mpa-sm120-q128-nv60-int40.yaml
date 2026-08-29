@@ -1,13 +1,7 @@
 query_block_size: 128
 prefix_kv_precision: int8
-sparsity_ratio: 0.90
-layer_sparsity_bands:
-  - [18, 34, 0.85]
-  - [34, 50, 0.65]
 dense_first_steps: 10
 dense_first_layers: 2
-diag_jensen: false
-enable_anchors: false
 nvfp4_ratio: 0.60
 int8_ratio: 0.40
 fp16_ratio: 0.0

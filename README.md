@@ -7,6 +7,51 @@ Currently, Anemoi supports stripe-compact ragged 2-D routing and native
 Mixed-Precision Attention (MPA) on SM89 and SM120. The executable model family
 is MiniMax-H3 on RTX 4090 and RTX 5090 GPUs.
 
+## Attention API
+
+Replace a BSHD attention call with the stable public entry point when the
+pipeline already knows its packed prefix/video layout and transformer layer:
+
+```python
+from anemoi import QuantConfig, SparseConfig, VisualLayout, anemoi_attention
+
+output = anemoi_attention(
+    query,
+    key,
+    value,
+    attn_mask=None,
+    layout=VisualLayout(
+        video_shape=(frames, height, width),
+        prefix_tokens=prefix_tokens,
+    ),
+    layer=layer,
+    sparse_config=SparseConfig(),
+    quant_config=QuantConfig(int8_ratio=1.0),
+)
+```
+
+### Supported Attention Configurations
+
+| GPU | Query block | Stable retained-block precision cells | Layout |
+| --- | --- | --- | --- |
+| SM89 / RTX 4090 | Q64 | INT8; INT8 + FP16 | visual-only; packed prefix + video |
+| SM120 / RTX 5090 | Q64 | every non-empty combination of NVFP4, INT8, and FP16 | visual-only; packed prefix + video |
+| SM120 / RTX 5090 | Q128 | every non-empty combination of NVFP4, INT8, and FP16 | visual-only; packed prefix + video |
+
+On SM120, Q128 includes every stable Q64 precision cell. Generic NVFP4 uses
+unity Q/K/V global scales by default and accepts an optional
+`NVFP4Calibration`; the MiniMax-H3 adapter supplies its own calibrated
+per-layer scales. The [Attention API guide](docs/attention_api.md) gives the
+complete precision, prefix, and calibration contract.
+
+`SparseConfig` defaults to portable Q64 and the calibrated per-layer Mean20
+budget with 20% average sparse-layer keep. `QuantConfig` defaults to the shared
+INT8 cell; the API guide lists the validated generic precision combinations.
+`VisualLayout` supports packed prefix-plus-video and visual-only sequences. See
+the [Attention API guide](docs/attention_api.md) for the complete tensor
+contract, build commands, compatibility table, and a model-independent
+integration example.
+
 ## Installation
 
 Linux, an NVIDIA GPU, and a CUDA toolkit containing `nvcc` are required for the native MiniMax-H3 MPA path. We recommend Conda for environment management. The setup script creates (or updates) an environment named `anemoi`, installs the pinned MiniMax-H3 runtime dependencies, Anemoi itself, and the development tools:
@@ -19,6 +64,16 @@ conda activate anemoi
 It detects the lowest NVIDIA driver version across the visible GPUs and picks a matching CUDA/PyTorch stack. Preview the selection without changing the environment with `scripts/setup_conda_env.sh --dry-run`.
 
 The script installs Python 3.12 and does not compile the CUDA extensions during installation. The MiniMax-H3 launcher builds them for the active PyTorch and CUDA installation when the MPA candidate is selected.
+
+For a standalone SM120 build, use the architecture-level component:
+
+```bash
+MPA_BUILD_COMPONENTS=sm120 scripts/build_attention_cuda.sh
+```
+
+The `sm120` component includes the shared packing/output assembly code and the
+internal SM120 kernels for both Q64 and Q128; third-party builds do not need to
+select internal extension components.
 
 For framework-only development, run the checks after activating the environment:
 
@@ -69,17 +124,14 @@ scripts/run_minimax_h3.sh mpa-ragged2d-mixed outputs/minimax-h3/mpa
 
 Dense is the quality baseline; the state-of-the-art method [Sol-Attn](https://github.com/NVlabs/Sana/tree/sol-engine) is introduced as a reference implementation. All three paths use the same checkpoint, conditioning, model fusions, Ulysses degree, seed, scheduler, and decoder.
 
-The launcher selects the production policy for the detected GPU architecture:
-
-- SM89 uses Q64 FP8/FP16 from
-  [`examples/minimax-h3/mpa-ragged2d-mixed.yaml`](examples/minimax-h3/mpa-ragged2d-mixed.yaml);
-- SM120 uses Q64 pure INT8, including INT8 prefix-query attention, from
-  [`examples/minimax-h3/mpa-sm120-q64-int8.yaml`](examples/minimax-h3/mpa-sm120-q64-int8.yaml).
-
-Both defaults enable same-frame adjacency anchors. Missing anchors replace the
-weakest retained edge in the lowest active precision, so they consume the
-fixed route budget instead of expanding it. Pass `--mpa-config` only to select
-an explicit or edited configuration:
+The launcher uses one architecture-neutral production policy on SM89 and
+SM120: Q64 pure INT8 for prefix queries, prefix K/V, and routed video blocks.
+Runtime device capability selects the matching native backend. The canonical
+policy is
+[`examples/minimax-h3/mpa-ragged2d-mixed.yaml`](examples/minimax-h3/mpa-ragged2d-mixed.yaml);
+the SM120 Q64 file is a compatibility alias with the same parsed policy.
+The frozen route uses the calibrated Mean20 policy.
+Pass `--mpa-config` only to select an explicit or edited configuration:
 
 ```bash
 scripts/run_minimax_h3.sh \
@@ -88,7 +140,7 @@ scripts/run_minimax_h3.sh \
   --mpa-config examples/minimax-h3/mpa-ragged2d-mixed.yaml
 ```
 
-For example, the SM120 default can be stated explicitly as:
+For compatibility, an architecture-named alias can be stated explicitly:
 
 ```bash
 scripts/run_minimax_h3.sh \
@@ -97,9 +149,8 @@ scripts/run_minimax_h3.sh \
   --mpa-config examples/minimax-h3/mpa-sm120-q64-int8.yaml
 ```
 
-The configuration controls query geometry, sparsity, precision phases,
-optional route corrections, and the dense-first schedule without requiring
-Python source changes.
+The configuration controls query geometry, sparsity, stable precision phases,
+and the dense-first schedule without requiring Python source changes.
 
 See [the reproduction guide](anemoi/models/minimax_h3/REPRODUCTION.md) for pinned resource revisions, manual setup, smoke tests, output contracts, and resource overrides.
 

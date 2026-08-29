@@ -41,6 +41,13 @@
 #include "primitives/qattn/attn_utils.cuh"
 #include "attention_decl.cuh"
 
+#ifndef MPA_DENSE_SEQUENTIAL
+#define MPA_DENSE_SEQUENTIAL 0
+#endif
+#ifndef MPA_STORE_LSE
+#define MPA_STORE_LSE 1
+#endif
+
 #if !defined(MPA_ATTENTION_KERNEL_ENTRY) || !defined(MPA_ATTENTION_LAUNCH_ENTRY)
 #if defined(MPA_PACKED_RASTER_MODE)
 #define MPA_ATTENTION_KERNEL_ENTRY mixed_attention_sm89_packed_raster_kernel
@@ -623,8 +630,13 @@ void MPA_ATTENTION_KERNEL_ENTRY(
   const uint32_t metadata_row =
       (batch_id * num_qo_heads + head_id) * num_query_blocks + query_block;
 
+#if MPA_DENSE_SEQUENTIAL
+  const uint32_t low_iterations = HasFp8 ? num_physical_stages : 0;
+  const uint32_t high_iterations = 0;
+#else
   const uint32_t low_iterations = HasFp8 ? fp8_count[metadata_row] : 0;
   const uint32_t high_iterations = HasFp16 ? fp16_count[metadata_row] : 0;
+#endif
   if (low_iterations == 0 && high_iterations == 0) {
     return;
   }
@@ -704,21 +716,25 @@ void MPA_ATTENTION_KERNEL_ENTRY(
       const float q_dequant_scale =
           q_scale[(batch_id * num_qo_heads + head_id) * num_query_blocks +
                   query_block];
-      int32_t* low_lut = fp8_lut + metadata_row * num_physical_stages;
       uint32_t absolute_stage = 0;
 
       // Keep the inherited Sparge/Sage copy/compute pipeline for every INT8
       // phase. K and V occupy disjoint shared-memory regions:
       // with two committed groups outstanding, wait_group<1> exposes the
       // older operand while the newer operand continues to overlap compute.
+#if !MPA_DENSE_SEQUENTIAL
+        int32_t* low_lut = fp8_lut + metadata_row * num_physical_stages;
         int32_t* low_delta = low_lut;
+#endif
         const float* k_scale_base =
             k_scale + (batch_id * num_kv_heads + kv_head) *
                           num_physical_stages;
 
         // Prologue: Q is already resident.  Issue predicated K0 followed by
         // padded V0, leaving both groups outstanding.
-#if defined(MPA_K64_BLOCK_MODE)
+#if MPA_DENSE_SEQUENTIAL
+        absolute_stage = 0;
+#elif defined(MPA_K64_BLOCK_MODE)
         absolute_stage = static_cast<uint32_t>(*low_delta++);
 #else
         absolute_stage += static_cast<uint32_t>(*low_delta++);
@@ -821,7 +837,9 @@ void MPA_ATTENTION_KERNEL_ENTRY(
           // All stages reached here precede the final active stage, hence K
           // is a full physical tile and the donor unpredicated copy is safe.
           __syncthreads();
-#if defined(MPA_K64_BLOCK_MODE)
+#if MPA_DENSE_SEQUENTIAL
+          absolute_stage = iteration + 1;
+#elif defined(MPA_K64_BLOCK_MODE)
           absolute_stage = static_cast<uint32_t>(*low_delta++);
 #else
           absolute_stage += static_cast<uint32_t>(*low_delta++);
@@ -911,7 +929,9 @@ void MPA_ATTENTION_KERNEL_ENTRY(
 #endif
 
           __syncthreads();
-#if defined(MPA_K64_BLOCK_MODE)
+#if MPA_DENSE_SEQUENTIAL
+          absolute_stage = low_iterations - 1;
+#elif defined(MPA_K64_BLOCK_MODE)
           absolute_stage = static_cast<uint32_t>(*low_delta++);
 #else
           absolute_stage += static_cast<uint32_t>(*low_delta++);
@@ -1410,6 +1430,7 @@ void MPA_ATTENTION_KERNEL_ENTRY(
       }
     }
   }
+#if MPA_STORE_LSE
   if (lane_id % 4 == 0) {
 #pragma unroll
     for (uint32_t fq = 0; fq < num_tiles_q; ++fq) {
@@ -1426,6 +1447,7 @@ void MPA_ATTENTION_KERNEL_ENTRY(
       }
     }
   }
+#endif
 #else
   normalize_d_inplace<num_tiles_q, num_tiles_v>(ro, d);
 #endif
@@ -1580,3 +1602,5 @@ void MPA_ATTENTION_LAUNCH_ENTRY(
 
 #undef MPA_ATTENTION_KERNEL_ENTRY
 #undef MPA_ATTENTION_LAUNCH_ENTRY
+#undef MPA_DENSE_SEQUENTIAL
+#undef MPA_STORE_LSE

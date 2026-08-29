@@ -580,8 +580,8 @@ pack_h3_k64_qkv_fp16(
       query.sizes() == key.sizes() && query.sizes() == value.sizes(),
       "H3 K64 query, key, and value shapes must match");
   TORCH_CHECK(
-      prefix_tokens > 0 && prefix_tokens < query.size(2),
-      "prefix_tokens must be positive and smaller than the sequence");
+      prefix_tokens >= 0 && prefix_tokens < query.size(2),
+      "prefix_tokens must be nonnegative and smaller than the sequence");
   TORCH_CHECK(
       video_token_indices.is_cuda() &&
           video_token_indices.device() == query.device() &&

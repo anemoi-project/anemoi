@@ -37,6 +37,20 @@ torch::Tensor sm120_h3_draft_probability(
     torch::Tensor q_pool,
     torch::Tensor k_pool);
 
+torch::Tensor sm120_h3_k_tail_r1_probability(
+    torch::Tensor q_pool,
+    torch::Tensor k_pool,
+    torch::Tensor packed_k,
+    torch::Tensor valid_counts,
+    int64_t prefix_blocks);
+
+torch::Tensor sm120_h3_k_tail_r2_probability(
+    torch::Tensor q_pool,
+    torch::Tensor k_pool,
+    torch::Tensor packed_k,
+    torch::Tensor valid_counts,
+    int64_t prefix_blocks);
+
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 sm120_h3_route_precision(
     torch::Tensor probability,

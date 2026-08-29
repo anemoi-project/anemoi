@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import warnings
 from dataclasses import asdict, dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import torch
 import torch.nn.functional as F
 
+from anemoi.layers.attention.api import (
+    NVFP4Calibration,
+    QuantConfig,
+    SparseConfig,
+    VisualLayout,
+    anemoi_attention,
+)
 from anemoi.layers.attention.mpa._private_h3_layout import _is_exact_h3_packed_qkv
 
 from .native_k64_attention import (
@@ -25,31 +36,64 @@ except (AttributeError, ImportError):
     _can_use_cudnn = None
 
 
+_FROZEN_SPARSE_CONFIG = SparseConfig()
+_NVFP4_SCALES = Path(__file__).resolve().parent / "configs/nvfp4_tensor_scales_sm120.json"
+_NVFP4_SCALES_SHA256 = "ef5413c53e459b8210c8fe3054a5462310f050ebc8a63e5d20a397a90627d455"
+
+
+@lru_cache(maxsize=1)
+def _load_nvfp4_calibration() -> dict[str, tuple[float, ...]]:
+    payload = _NVFP4_SCALES.read_bytes()
+    if hashlib.sha256(payload).hexdigest() != _NVFP4_SCALES_SHA256:
+        raise RuntimeError("unexpected MiniMax-H3 NVFP4 calibration SHA256")
+    calibration = json.loads(payload)
+    if calibration["model"]["revision"] != "bfc8ed0353f5a9733be73e6b2c98ec0948195b86":
+        raise RuntimeError("unexpected MiniMax-H3 NVFP4 calibration revision")
+    return {
+        name: tuple(map(float, calibration["scales"][name]))
+        for name in ("q_tensor_scale", "k_tensor_scale", "v_tensor_scale")
+    }
+
+
+@lru_cache(maxsize=50)
+def _nvfp4_calibration(layer: int) -> NVFP4Calibration:
+    calibration = _load_nvfp4_calibration()
+    if type(layer) is not int or not 0 <= layer < len(calibration["q_tensor_scale"]):
+        raise ValueError("layer is outside the NVFP4 calibration")
+    return NVFP4Calibration(
+        *(
+            calibration[name][layer]
+            for name in ("q_tensor_scale", "k_tensor_scale", "v_tensor_scale")
+        )
+    )
+
+
 @dataclass(frozen=True)
 class H3MPAConfig:
     """Geometry, schedule, and precision phases for one H3 request."""
 
     video_shape: tuple[int, int, int] = (37, 24, 42)
     prefix_tokens: int = 951
-    sparsity_ratio: float = 0.88
+    sparsity_ratio: float = _FROZEN_SPARSE_CONFIG.sparsity_ratio
     query_block_size: int = 64
-    prefix_kv_precision: str = "auto"
-    prefix_query_precision: str = "auto"
-    fp8_ratio: float = 0.80
+    prefix_kv_precision: str = "int8"
+    prefix_query_precision: str = "int8"
+    fp8_ratio: float = 0.0
     nvfp4_ratio: float = 0.0
-    int8_ratio: float = 0.0
+    int8_ratio: float = 1.0
     mxfp8_ratio: float = 0.0
-    fp16_ratio: float = 0.20
+    fp16_ratio: float = 0.0
     dense_first_steps: int = 10
     dense_first_layers: int = 2
     layers_per_step: int = 50
     layer_sparsity_bands: tuple[tuple[int, int, float], ...] = (
-        (18, 34, 0.82),
-        (34, 50, 0.58),
+        _FROZEN_SPARSE_CONFIG.layer_sparsity_bands
     )
     layer_precision_bands: tuple[tuple[float | int, ...], ...] = ()
+    draftmap_proxy: str = "mean"
+    layer_draftmap_bands: tuple[tuple[int, int, str], ...] = ()
     diag_jensen: bool = False
-    enable_anchors: bool = True
+    enable_anchors: bool = False
     strict: bool = True
 
     def __post_init__(self) -> None:
@@ -72,9 +116,7 @@ class H3MPAConfig:
             "nvfp4",
             "int8",
         ):
-            raise ValueError(
-                "prefix_kv_precision must be auto, fp16, mxfp8, nvfp4, or int8"
-            )
+            raise ValueError("prefix_kv_precision must be auto, fp16, mxfp8, nvfp4, or int8")
         if self.prefix_query_precision not in (
             "auto",
             "fp16",
@@ -82,9 +124,9 @@ class H3MPAConfig:
             "mxfp8",
             "nvfp4",
         ):
-            raise ValueError(
-                "prefix_query_precision must be auto, fp16, int8, mxfp8, or nvfp4"
-            )
+            raise ValueError("prefix_query_precision must be auto, fp16, int8, mxfp8, or nvfp4")
+        if self.draftmap_proxy not in ("mean", "k_tail_r1", "k_tail_r2"):
+            raise ValueError("draftmap_proxy must be mean, k_tail_r1, or k_tail_r2")
         if any(
             type(value) is not int or value < 0
             for value in (self.dense_first_steps, self.dense_first_layers)
@@ -114,26 +156,24 @@ class H3MPAConfig:
         if legacy_q64:
             ratios = (float(self.fp8_ratio), float(self.fp16_ratio))
             if (
-                any(not math.isfinite(value) or value <= 0.0 for value in ratios)
+                not math.isfinite(ratios[0])
+                or ratios[0] <= 0.0
+                or not math.isfinite(ratios[1])
+                or ratios[1] < 0.0
                 or not math.isclose(sum(ratios), 1.0, abs_tol=1.0e-6)
-                or self.nvfp4_ratio != 0.0
-                or self.int8_ratio != 0.0
-                or self.mxfp8_ratio != 0.0
                 or self.layer_precision_bands
             ):
-                raise ValueError("Q64 requires positive FP8/FP16 ratios summing to one")
+                raise ValueError(
+                    "legacy Q64 requires positive FP8 and nonnegative FP16 ratios summing to one"
+                )
         else:
             if (
                 float(self.fp8_ratio) != 0.0
-                or any(
-                    not math.isfinite(value) or value < 0.0
-                    for value in sm120_ratios
-                )
+                or any(not math.isfinite(value) or value < 0.0 for value in sm120_ratios)
                 or not math.isclose(sum(sm120_ratios), 1.0, abs_tol=1.0e-6)
             ):
                 raise ValueError(
-                    "SM120 requires nonnegative NVFP4/INT8/MXFP8/FP16 "
-                    "ratios summing to one"
+                    "native phases require nonnegative NVFP4/INT8/MXFP8/FP16 ratios summing to one"
                 )
             if self.int8_ratio > 0.0 and self.mxfp8_ratio > 0.0:
                 raise ValueError("INT8 and MXFP8 are alternative middle phases")
@@ -169,8 +209,7 @@ class H3MPAConfig:
         for band in self.layer_precision_bands:
             if not isinstance(band, tuple) or len(band) not in (5, 6):
                 raise TypeError(
-                    "layer precision bands must be (first, last, NVFP4, INT8, "
-                    "[MXFP8,] FP16)"
+                    "layer precision bands must be (first, last, NVFP4, INT8, [MXFP8,] FP16)"
                 )
             first, last, *precision = band
             if (
@@ -181,9 +220,8 @@ class H3MPAConfig:
             ):
                 raise ValueError("layer precision bands must be sorted and disjoint")
             values = tuple(map(float, precision))
-            if (
-                any(not math.isfinite(value) or value < 0.0 for value in values)
-                or not math.isclose(sum(values), 1.0, abs_tol=1.0e-6)
+            if any(not math.isfinite(value) or value < 0.0 for value in values) or not math.isclose(
+                sum(values), 1.0, abs_tol=1.0e-6
             ):
                 raise ValueError("layer precision ratios must be nonnegative and sum to one")
             int8 = values[1]
@@ -191,6 +229,30 @@ class H3MPAConfig:
             if int8 > 0.0 and mxfp8 > 0.0:
                 raise ValueError("INT8 and MXFP8 are alternative middle phases")
             previous_end = last
+
+        previous_end = 0
+        for band in self.layer_draftmap_bands:
+            if not isinstance(band, tuple) or len(band) != 3:
+                raise TypeError("layer draftmap bands must be (first, last, proxy)")
+            first, last, proxy = band
+            if (
+                type(first) is not int
+                or type(last) is not int
+                or not 0 <= first < last <= self.layers_per_step
+                or first < previous_end
+            ):
+                raise ValueError("layer draftmap bands must be sorted, disjoint, and in range")
+            if proxy not in ("mean", "k_tail_r1", "k_tail_r2"):
+                raise ValueError("layer draftmap proxy must be mean, k_tail_r1, or k_tail_r2")
+            previous_end = last
+
+        k_tail_enabled = self.draftmap_proxy in ("k_tail_r1", "k_tail_r2") or any(
+            proxy in ("k_tail_r1", "k_tail_r2") for _, _, proxy in self.layer_draftmap_bands
+        )
+        if k_tail_enabled and (self.query_block_size != 64 or legacy_q64):
+            raise ValueError("K-tail requires portable Q64 native phases")
+        if k_tail_enabled and self.diag_jensen:
+            raise ValueError("K-tail cannot be combined with diag_jensen")
 
     @property
     def video_tokens(self) -> int:
@@ -226,6 +288,29 @@ class H3MPAConfig:
                 nvfp4, int8, mxfp8, fp16 = precision
                 return tuple(map(float, (nvfp4, int8, mxfp8, fp16)))
         return result
+
+    def sm89_precision(self, layer: int) -> tuple[float, float]:
+        """Resolve the SM89 INT8/FP16 pair from portable or legacy fields."""
+
+        if self.query_block_size != 64:
+            raise RuntimeError("SM89 requires query_block_size=64")
+        if self.fp8_ratio > 0.0:
+            return float(self.fp8_ratio), float(self.fp16_ratio)
+        nvfp4, int8, mxfp8, fp16 = self.precision(layer)
+        if nvfp4 != 0.0 or mxfp8 != 0.0 or int8 <= 0.0:
+            raise RuntimeError(
+                "SM89 supports the portable INT8/FP16 phase pair only; "
+                "NVFP4 and MXFP8 require SM120"
+            )
+        return int8, fp16
+
+    def draftmap(self, layer: int) -> str:
+        if type(layer) is not int or not 0 <= layer < self.layers_per_step:
+            raise ValueError("layer is outside the configured transformer stack")
+        for first, last, proxy in self.layer_draftmap_bands:
+            if first <= layer < last:
+                return proxy
+        return self.draftmap_proxy
 
 
 def _dense_attention(
@@ -265,6 +350,10 @@ def _can_use_direct_packed_views(
     return bool(_can_use_cudnn(_SDPAParams(q_prefix, k_full, v_full, None, 0.0, False, False)))
 
 
+def _device_capability(tensor: torch.Tensor) -> tuple[int, int]:
+    return tuple(torch.cuda.get_device_capability(tensor.device))
+
+
 def _target_video_start(video_indices: torch.Tensor, sequence_length: int) -> int:
     if not isinstance(video_indices, torch.Tensor) or video_indices.ndim != 1:
         raise ValueError("video_indices must be rank one")
@@ -284,6 +373,33 @@ class H3MPAAttention:
         if not isinstance(config, H3MPAConfig):
             raise TypeError("config must be H3MPAConfig")
         self.config = config
+        self._public_configs = None
+        if (
+            config.fp8_ratio == 0.0
+            and config.mxfp8_ratio == 0.0
+            and not config.layer_precision_bands
+            and config.draftmap_proxy == "mean"
+            and not config.layer_draftmap_bands
+            and not config.diag_jensen
+            and not config.enable_anchors
+            and config.prefix_kv_precision in ("nvfp4", "int8", "fp16")
+            and config.prefix_query_precision in ("int8", "fp16")
+        ):
+            self._public_configs = (
+                VisualLayout(config.video_shape, config.prefix_tokens),
+                SparseConfig(
+                    query_block_size=config.query_block_size,
+                    sparsity_ratio=config.sparsity_ratio,
+                    layer_sparsity_bands=config.layer_sparsity_bands,
+                ),
+                QuantConfig(
+                    nvfp4_ratio=config.nvfp4_ratio,
+                    int8_ratio=config.int8_ratio,
+                    fp16_ratio=config.fp16_ratio,
+                    prefix_kv_precision=config.prefix_kv_precision,
+                    prefix_query_precision=config.prefix_query_precision,
+                ),
+            )
         self.step = -1
         self.layer = 0
         self.request = -1
@@ -329,15 +445,11 @@ class H3MPAAttention:
         sequence = int(position_ids.shape[0])
         self._observed_sequence = sequence
         if sequence != self.config.sequence_tokens:
-            raise ValueError(
-                f"observed {sequence} tokens, expected {self.config.sequence_tokens}"
-            )
+            raise ValueError(f"observed {sequence} tokens, expected {self.config.sequence_tokens}")
         if video_indices is not None:
             prefix = _target_video_start(video_indices, sequence)
             if prefix != self.config.prefix_tokens:
-                raise ValueError(
-                    f"observed prefix {prefix}, expected {self.config.prefix_tokens}"
-                )
+                raise ValueError(f"observed prefix {prefix}, expected {self.config.prefix_tokens}")
 
         current = None
         if timestep is not None:
@@ -367,10 +479,7 @@ class H3MPAAttention:
         self.last_request_mpa_calls = self.mpa_calls - self._mpa_at_request_start
         self._mpa_at_request_start = self.mpa_calls
         self._last_closed_request = self.request
-        if (
-            self.step + 1 <= self.config.dense_first_steps
-            or self.last_request_mpa_calls > 0
-        ):
+        if self.step + 1 <= self.config.dense_first_steps or self.last_request_mpa_calls > 0:
             return
         message = "request passed the dense-first schedule without an MPA call"
         if self.config.strict:
@@ -403,20 +512,46 @@ class H3MPAAttention:
             q_full = q.unsqueeze(0).contiguous()
             k_full = k.unsqueeze(0).contiguous()
             v_full = v.unsqueeze(0).contiguous()
-        if self.config.query_block_size == 64 and self.config.fp8_ratio > 0.0:
+        prefix_nvfp4 = self.config.prefix_tokens > 0 and self.config.prefix_kv_precision == "nvfp4"
+        if self._public_configs is not None:
+            layout, sparse_config, quant_config = self._public_configs
+            return anemoi_attention(
+                q_full,
+                k_full,
+                v_full,
+                layout=layout,
+                layer=layer,
+                sparse_config=sparse_config,
+                quant_config=quant_config,
+                calibration=(
+                    _nvfp4_calibration(layer)
+                    if quant_config.nvfp4_ratio > 0.0 or prefix_nvfp4
+                    else None
+                ),
+            ).squeeze(0)
+        draftmap_proxy = self.config.draftmap(layer)
+        capability = _device_capability(q_full)
+        if capability == (8, 9):
+            if draftmap_proxy != "mean":
+                raise RuntimeError("K-tail DraftMap is available only on SM120 Q64")
+            retained_int8, retained_fp16 = self.config.sm89_precision(layer)
             output = sm89_ragged_h3_attention(
                 q_full,
                 k_full,
                 v_full,
                 prefix_tokens=self.config.prefix_tokens,
                 sparsity_ratio=self._sparsity(layer),
-                retained_fp8_ratio=self.config.fp8_ratio,
-                retained_fp16_ratio=self.config.fp16_ratio,
+                retained_int8_ratio=retained_int8,
+                retained_fp16_ratio=retained_fp16,
                 video_shape=self.config.video_shape,
+                prefix_kv_precision=self.config.prefix_kv_precision,
+                prefix_query_precision=self.config.prefix_query_precision,
                 diag_jensen=self.config.diag_jensen,
                 enable_anchors=self.config.enable_anchors,
             )
-        else:
+        elif capability == (12, 0):
+            if self.config.fp8_ratio > 0.0:
+                raise RuntimeError("legacy SM89 fp8_ratio configurations cannot run on SM120")
             nvfp4, int8, mxfp8, fp16 = self.config.precision(layer)
             output = sm120_ragged_h3_attention(
                 q_full,
@@ -433,8 +568,19 @@ class H3MPAAttention:
                 query_block_size=self.config.query_block_size,
                 prefix_kv_precision=self.config.prefix_kv_precision,
                 prefix_query_precision=self.config.prefix_query_precision,
+                draftmap_proxy=draftmap_proxy,
                 diag_jensen=self.config.diag_jensen,
                 enable_anchors=self.config.enable_anchors,
+                nvfp4_scales=(
+                    _nvfp4_calibration(layer).scales
+                    if nvfp4 > 0.0 or prefix_nvfp4
+                    else (1.0, 1.0, 1.0)
+                ),
+            )
+        else:
+            raise RuntimeError(
+                "native MiniMax-H3 MPA requires SM89 or SM120, "
+                f"got SM{capability[0]}{capability[1]}"
             )
         return output.squeeze(0)
 
@@ -482,7 +628,6 @@ def install_layout_observer(
                 video_indices=kwargs.get("video_indices"),
                 position_ids=position_ids,
             )
-        return None
 
     return transformer.register_forward_pre_hook(pre_hook, with_kwargs=True)
 

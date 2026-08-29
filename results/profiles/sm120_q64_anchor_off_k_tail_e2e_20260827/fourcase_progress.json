@@ -1,0 +1,154 @@
+{
+  "schema": "anemoi.sm120.q64_anchor_off_mixed_k_tail_fourcase.v1",
+  "cases": ["p01", "p05", "p19", "p35"],
+  "comparison": "Each K-tail and Mean candidate is compared only with the matching Dense output.",
+  "rows": [
+    {
+      "case": "p01",
+      "k_tail": {
+        "transformer_gpu_s": 970.772,
+        "transformer_resident_gpu_s": 1314.34,
+        "global_rgb_mse": 378.68690542912844,
+        "global_rgb_psnr_db": 22.34800072906299,
+        "frame_mean_psnr_db": 23.24973292310601,
+        "worst_frame_psnr_db": 18.198009085056654,
+        "latent_cosine": 0.9726201891899109
+      },
+      "mean": {
+        "transformer_gpu_s": 965.274,
+        "transformer_resident_gpu_s": 1314.476,
+        "global_rgb_mse": 921.8448452710213,
+        "global_rgb_psnr_db": 18.4842252930765,
+        "frame_mean_psnr_db": 21.015994669412155,
+        "worst_frame_psnr_db": 12.311223638200383,
+        "latent_cosine": 0.9515293836593628
+      },
+      "delta_k_tail_minus_mean": {
+        "transformer_gpu_s": 5.498000000000047,
+        "transformer_resident_gpu_s": -0.13600000000019463,
+        "global_rgb_mse": -543.1579398418928,
+        "global_rgb_psnr_db": 3.86377543598649,
+        "frame_mean_psnr_db": 2.233738253693854,
+        "worst_frame_psnr_db": 5.886785446856271,
+        "latent_cosine": 0.021090805530548096
+      }
+    },
+    {
+      "case": "p05",
+      "k_tail": {
+        "transformer_gpu_s": 966.299,
+        "transformer_resident_gpu_s": 1315.006,
+        "global_rgb_mse": 633.4835943091275,
+        "global_rgb_psnr_db": 20.113449886780884,
+        "frame_mean_psnr_db": 20.291293600113136,
+        "worst_frame_psnr_db": 16.897115251287417,
+        "latent_cosine": 0.9280481338500977
+      },
+      "mean": {
+        "transformer_gpu_s": 970.757,
+        "transformer_resident_gpu_s": 1315.303,
+        "global_rgb_mse": 670.8693297027827,
+        "global_rgb_psnr_db": 19.86442423285245,
+        "frame_mean_psnr_db": 20.122243609272715,
+        "worst_frame_psnr_db": 16.13953730957608,
+        "latent_cosine": 0.9253491163253784
+      },
+      "delta_k_tail_minus_mean": {
+        "transformer_gpu_s": -4.45799999999997,
+        "transformer_resident_gpu_s": -0.29700000000002547,
+        "global_rgb_mse": -37.38573539365518,
+        "global_rgb_psnr_db": 0.24902565392843456,
+        "frame_mean_psnr_db": 0.1690499908404206,
+        "worst_frame_psnr_db": 0.757577941711336,
+        "latent_cosine": 0.0026990175247192383
+      }
+    },
+    {
+      "case": "p19",
+      "k_tail": {
+        "transformer_gpu_s": 967.243,
+        "transformer_resident_gpu_s": 1311.988,
+        "global_rgb_mse": 1167.7187428791642,
+        "global_rgb_psnr_db": 17.457421098079234,
+        "frame_mean_psnr_db": 18.154235503913903,
+        "worst_frame_psnr_db": 15.369301989121881,
+        "latent_cosine": 0.8866150975227356
+      },
+      "mean": {
+        "transformer_gpu_s": 973.537,
+        "transformer_resident_gpu_s": 1320.305,
+        "global_rgb_mse": 622.6411784024418,
+        "global_rgb_psnr_db": 20.188425214864374,
+        "frame_mean_psnr_db": 20.236861119945203,
+        "worst_frame_psnr_db": 17.74765209800944,
+        "latent_cosine": 0.93693608045578
+      },
+      "delta_k_tail_minus_mean": {
+        "transformer_gpu_s": -6.293999999999983,
+        "transformer_resident_gpu_s": -8.317000000000007,
+        "global_rgb_mse": 545.0775644767224,
+        "global_rgb_psnr_db": -2.73100411678514,
+        "frame_mean_psnr_db": -2.082625616031301,
+        "worst_frame_psnr_db": -2.378350108887558,
+        "latent_cosine": -0.050320982933044434
+      }
+    },
+    {
+      "case": "p35",
+      "k_tail": {
+        "transformer_gpu_s": 968.653,
+        "transformer_resident_gpu_s": 1313.783,
+        "global_rgb_mse": 1782.8924881173655,
+        "global_rgb_psnr_db": 15.619552057044137,
+        "frame_mean_psnr_db": 16.707330881031464,
+        "worst_frame_psnr_db": 8.946349210531832,
+        "latent_cosine": 0.8737419843673706
+      },
+      "mean": {
+        "transformer_gpu_s": 969.843,
+        "transformer_resident_gpu_s": 1314.232,
+        "global_rgb_mse": 1549.3615698983187,
+        "global_rgb_psnr_db": 16.22927581270305,
+        "frame_mean_psnr_db": 16.942063835826144,
+        "worst_frame_psnr_db": 8.556629873444672,
+        "latent_cosine": 0.8790236711502075
+      },
+      "delta_k_tail_minus_mean": {
+        "transformer_gpu_s": -1.1899999999999409,
+        "transformer_resident_gpu_s": -0.4490000000000691,
+        "global_rgb_mse": 233.53091821904673,
+        "global_rgb_psnr_db": -0.6097237556589139,
+        "frame_mean_psnr_db": -0.23473295479467993,
+        "worst_frame_psnr_db": 0.38971933708715945,
+        "latent_cosine": -0.005281686782836914
+      }
+    }
+  ],
+  "aggregate": {
+    "dense_transformer_gpu_total_s": 8977.943,
+    "k_tail_transformer_gpu_total_s": 3872.9669999999996,
+    "k_tail_transformer_resident_gpu_total_s": 5255.117,
+    "k_tail_speedup_vs_dense": 2.318104698542487,
+    "k_tail_mean_global_rgb_mse": 990.6954326836964,
+    "k_tail_mean_global_rgb_psnr_db": 18.88460594274181,
+    "k_tail_mean_frame_psnr_db": 19.600648227041127,
+    "k_tail_mean_worst_frame_psnr_db": 14.852693883999446,
+    "k_tail_mean_latent_cosine": 0.9152563512325287,
+    "mean_transformer_gpu_total_s": 3879.411,
+    "mean_transformer_resident_gpu_total_s": 5264.316000000001,
+    "mean_mean_global_rgb_mse": 941.1792308186411,
+    "mean_mean_global_rgb_psnr_db": 18.691587638374095,
+    "mean_mean_frame_psnr_db": 19.579290808614054,
+    "mean_mean_worst_frame_psnr_db": 13.688760729807644,
+    "mean_mean_latent_cosine": 0.9232095628976822,
+    "delta_k_tail_minus_mean": {
+      "transformer_gpu_total_s": -6.444000000000415,
+      "transformer_resident_gpu_total_s": -9.199000000000524,
+      "mean_global_rgb_mse": 49.51620186505522,
+      "mean_global_rgb_psnr_db": 0.1930183043677154,
+      "mean_frame_psnr_db": 0.021357418427072616,
+      "mean_worst_frame_psnr_db": 1.1639331541918025,
+      "mean_latent_cosine": -0.007953211665153503
+    }
+  }
+}

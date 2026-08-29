@@ -4,8 +4,8 @@
 The runner combines SolEngine's pruned-FP8 DiT loader with its lossless
 Ulysses packed-QKV exchange.  Every candidate uses the same checkpoint,
 conditioning, model fusions, sequence sharding and decode path; only the
-post-Ulysses attention callable changes. The launcher selects the Q64
-FP8/FP16 policy on SM89 and the Q64 pure-INT8 policy on SM120.
+post-Ulysses attention callable changes. Both SM89 and SM120 use the same Q64
+pure-INT8 policy; runtime dispatch selects the architecture-owned kernel.
 
 The bundled SolEngine runtime snapshot is imported read-only. Persistent
 artifacts go to the requested output directory; compilation and runtime caches
@@ -30,6 +30,7 @@ from typing import Any
 
 import yaml
 
+from anemoi.layers.attention.api import SparseConfig
 from anemoi.models.minimax_h3.resources import CHECKPOINT_BYTES, CHECKPOINT_SHA256
 from anemoi.models.minimax_h3.runtime import delivery_contract
 
@@ -42,9 +43,7 @@ DEFAULT_SOL_ROOT = PACKAGE_ROOT / "solengine"
 DEFAULT_DIFFUSERS = Path(
     os.environ.get("H3_DIFFUSERS_CHECKOUT", DEFAULT_RESOURCE_ROOT / "diffusers")
 )
-DEFAULT_MODEL_ROOT = Path(
-    os.environ.get("H3_MODEL_ROOT", DEFAULT_RESOURCE_ROOT / "model")
-)
+DEFAULT_MODEL_ROOT = Path(os.environ.get("H3_MODEL_ROOT", DEFAULT_RESOURCE_ROOT / "model"))
 DEFAULT_CHECKPOINT = Path(
     os.environ.get(
         "H3_DIT_CHECKPOINT",
@@ -54,9 +53,7 @@ DEFAULT_CHECKPOINT = Path(
 )
 DEFAULT_CONDITIONING = PACKAGE_ROOT / "assets/official-example-1.pt"
 DEFAULT_MPA_CONFIG = REPO_ROOT / "examples/minimax-h3/mpa-ragged2d-mixed.yaml"
-PROMPT_SHA256 = (
-    "98f36b879692095e099ae824c18d9e93e7006a490e082fd474a5f531769dcf06"
-)
+PROMPT_SHA256 = "98f36b879692095e099ae824c18d9e93e7006a490e082fd474a5f531769dcf06"
 BENCHMARK_SCHEMA = "anemoi.benchmark.minimax_h3.v3"
 LONG_SEQUENCE_OFFLOAD_TOKENS = 65536
 PROMPTS = {
@@ -73,9 +70,7 @@ def load_prompt_registry(path: Path) -> dict[str, tuple[Path, str]]:
         if not isinstance(prompt_id, str) or not prompt_id:
             raise TypeError("prompt registry IDs must be non-empty strings")
         if not isinstance(spec, dict) or set(spec) != {"path", "sha256"}:
-            raise TypeError(
-                f"prompt registry entry {prompt_id!r} must contain path and sha256"
-            )
+            raise TypeError(f"prompt registry entry {prompt_id!r} must contain path and sha256")
         conditioning = Path(spec["path"]).expanduser()
         if not conditioning.is_absolute():
             conditioning = path.parent / conditioning
@@ -83,55 +78,63 @@ def load_prompt_registry(path: Path) -> dict[str, tuple[Path, str]]:
         if not conditioning.is_file():
             raise FileNotFoundError(f"conditioning does not exist: {conditioning}")
         sha256 = spec["sha256"]
-        if not isinstance(sha256, str) or len(sha256) != 64 or any(
-            char not in "0123456789abcdefABCDEF" for char in sha256
+        if (
+            not isinstance(sha256, str)
+            or len(sha256) != 64
+            or any(char not in "0123456789abcdefABCDEF" for char in sha256)
         ):
-            raise ValueError(
-                f"prompt registry entry {prompt_id!r} has an invalid SHA256"
-            )
+            raise ValueError(f"prompt registry entry {prompt_id!r} has an invalid SHA256")
         prompts[prompt_id] = (conditioning, sha256.lower())
     return prompts
 
 
 MPA_MAINLINE_CANDIDATE = "mpa-ragged2d-mixed"
+_FROZEN_SPARSE_CONFIG = SparseConfig()
 _MPA_PROFILES: dict[str, dict[str, Any]] = {
     MPA_MAINLINE_CANDIDATE: {
-        "video_sparsity_ratio": 0.88,
-        "query_block_size": 64,
-        "layer_sparsity_bands": ((18, 34, 0.82), (34, 50, 0.58)),
-        "average_sparse_layer_sparsity_ratio": 0.76,
-        "precision": {"fp8": 0.8, "fp16": 0.2},
+        "video_sparsity_ratio": _FROZEN_SPARSE_CONFIG.sparsity_ratio,
+        "query_block_size": _FROZEN_SPARSE_CONFIG.query_block_size,
+        "layer_sparsity_bands": _FROZEN_SPARSE_CONFIG.layer_sparsity_bands,
+        "average_sparse_layer_sparsity_ratio": 0.80,
+        "precision": {
+            "nvfp4": 0.0,
+            "int8": 1.0,
+            "mxfp8": 0.0,
+            "fp16": 0.0,
+        },
+        "prefix_kv_precision": "int8",
+        "prefix_query_precision": "int8",
         "diag_jensen": False,
-        "enable_anchors": True,
-        "route_note": (
-            "pooled-QK row-softmax probability; exact per-head global top-k; "
-            "missing same-frame ragged adjacency anchors replace the weakest "
-            "lowest-precision selections"
-        ),
+        "enable_anchors": False,
+        "route_note": "Mean pooled-QK routing with exact per-head global top-k",
         "tile_note": (
             "stripe-compact exact cover at logical capacity 64; arbitrary "
             "positive latent grids execute through physical Q64xK64"
         ),
-        "skip_compensation": "disabled; unselected blocks are dropped",
+        "skip_compensation": "unselected blocks are dropped",
     }
 }
 CANDIDATES = ("dense", "official-sol", MPA_MAINLINE_CANDIDATE)
-_MPA_CONFIG_KEYS = {
+_STABLE_MPA_CONFIG_KEYS = {
     "dense_first_layers",
     "dense_first_steps",
     "fp16_ratio",
-    "fp8_ratio",
     "int8_ratio",
-    "mxfp8_ratio",
     "nvfp4_ratio",
     "prefix_kv_precision",
     "prefix_query_precision",
     "query_block_size",
     "layer_sparsity_bands",
+    "sparsity_ratio",
+}
+_EXPERIMENTAL_MPA_CONFIG_KEYS = _STABLE_MPA_CONFIG_KEYS | {
+    "draftmap_proxy",
+    "fp8_ratio",
+    "mxfp8_ratio",
     "layer_precision_bands",
+    "layer_draftmap_bands",
     "diag_jensen",
     "enable_anchors",
-    "sparsity_ratio",
 }
 
 
@@ -142,8 +145,8 @@ def _parser() -> argparse.ArgumentParser:
         choices=CANDIDATES,
         default=MPA_MAINLINE_CANDIDATE,
         help=(
-            "attention candidate; the launcher selects the architecture's Q64 "
-            "production policy with stripe-compact ragged 2-D routing and anchors"
+            "attention candidate; SM89 and SM120 share the Q64 pure-INT8 "
+            "production policy with stripe-compact ragged 2-D routing"
         ),
     )
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -157,7 +160,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--fp8-ratio",
         type=float,
-        help="retained sparse blocks assigned to the SM89 FP8 phase",
+        help="legacy SM89 low-phase ratio (symmetric INT8 Q/K and E4M3 V)",
     )
     parser.add_argument(
         "--fp16-ratio",
@@ -197,7 +200,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _read_mpa_config(path: Path) -> dict[str, Any]:
+def _read_mpa_yaml(path: Path, allowed: set[str], schema: str) -> dict[str, Any]:
     path = path.resolve()
     try:
         payload = yaml.safe_load(path.read_text())
@@ -207,10 +210,31 @@ def _read_mpa_config(path: Path) -> dict[str, Any]:
         raise ValueError(f"invalid MPA YAML config {path}: {exc}") from exc
     if not isinstance(payload, dict):
         raise TypeError("MPA config must be a YAML mapping")
-    unknown = sorted(set(payload) - _MPA_CONFIG_KEYS)
+    unknown = sorted(set(payload) - allowed)
     if unknown:
-        raise ValueError(f"unknown MPA config keys: {unknown}")
+        raise ValueError(f"unknown MPA config keys in {schema} MPA config: {unknown}")
     return payload
+
+
+def _read_mpa_config(path: Path) -> dict[str, Any]:
+    """Read the release-facing schema shared with the public config objects."""
+
+    payload = _read_mpa_yaml(path, _STABLE_MPA_CONFIG_KEYS, "stable")
+    if payload.get("prefix_kv_precision", "int8") not in (
+        "nvfp4",
+        "int8",
+        "fp16",
+    ):
+        raise ValueError("prefix_kv_precision must be nvfp4, int8, or fp16")
+    if payload.get("prefix_query_precision", "int8") not in ("int8", "fp16"):
+        raise ValueError("prefix_query_precision must be int8 or fp16")
+    return payload
+
+
+def _read_experimental_mpa_config(path: Path) -> dict[str, Any]:
+    """Read the private schema used only for historical experiment replay."""
+
+    return _read_mpa_yaml(path, _EXPERIMENTAL_MPA_CONFIG_KEYS, "experimental")
 
 
 def _finite_ratio(value: Any, name: str, *, allow_one: bool = False) -> float:
@@ -226,26 +250,49 @@ def _finite_ratio(value: Any, name: str, *, allow_one: bool = False) -> float:
 
 def _apply_mpa_config(profile: dict[str, Any], config: dict[str, Any]) -> None:
     if "query_block_size" in config:
-        if (
-            type(config["query_block_size"]) is not int
-            or config["query_block_size"] not in (64, 128)
+        if type(config["query_block_size"]) is not int or config["query_block_size"] not in (
+            64,
+            128,
         ):
             raise ValueError("query_block_size must be 64 or 128")
         profile["query_block_size"] = config["query_block_size"]
     if "prefix_kv_precision" in config:
         value = config["prefix_kv_precision"]
         if value not in ("auto", "fp16", "mxfp8", "nvfp4", "int8"):
-            raise ValueError(
-                "prefix_kv_precision must be auto, fp16, mxfp8, nvfp4, or int8"
-            )
+            raise ValueError("prefix_kv_precision must be auto, fp16, mxfp8, nvfp4, or int8")
         profile["prefix_kv_precision"] = value
     if "prefix_query_precision" in config:
         value = config["prefix_query_precision"]
         if value not in ("auto", "fp16", "int8", "mxfp8", "nvfp4"):
-            raise ValueError(
-                "prefix_query_precision must be auto, fp16, int8, mxfp8, or nvfp4"
-            )
+            raise ValueError("prefix_query_precision must be auto, fp16, int8, mxfp8, or nvfp4")
         profile["prefix_query_precision"] = value
+    if "draftmap_proxy" in config:
+        value = config["draftmap_proxy"]
+        if value not in ("mean", "k_tail_r1", "k_tail_r2"):
+            raise ValueError("draftmap_proxy must be mean, k_tail_r1, or k_tail_r2")
+        profile["draftmap_proxy"] = value
+    if "layer_draftmap_bands" in config:
+        bands = config["layer_draftmap_bands"]
+        if not isinstance(bands, list):
+            raise TypeError("layer_draftmap_bands must be an array")
+        resolved_draftmap_bands: list[tuple[int, int, str]] = []
+        previous_end = 0
+        for band in bands:
+            if not isinstance(band, list) or len(band) != 3:
+                raise ValueError("each layer draftmap band must be [first,last,proxy]")
+            first, last, proxy = band
+            if (
+                type(first) is not int
+                or type(last) is not int
+                or not 0 <= first < last <= 50
+                or first < previous_end
+            ):
+                raise ValueError("layer draftmap bands must be sorted, disjoint, and within 0..50")
+            if proxy not in ("mean", "k_tail_r1", "k_tail_r2"):
+                raise ValueError("layer draftmap proxy must be mean, k_tail_r1, or k_tail_r2")
+            resolved_draftmap_bands.append((first, last, proxy))
+            previous_end = last
+        profile["layer_draftmap_bands"] = tuple(resolved_draftmap_bands)
     query_block = int(profile.get("query_block_size", 64))
     if query_block == 128:
         profile["tile_note"] = (
@@ -253,24 +300,20 @@ def _apply_mpa_config(profile: dict[str, Any], config: dict[str, Any]) -> None:
             "physical Q128xK64 execution"
         )
 
-    sm120_required = {"nvfp4_ratio", "int8_ratio", "fp16_ratio"}
-    sm120_requested = query_block == 128 or bool(
+    native_phase_required = {"nvfp4_ratio", "int8_ratio", "fp16_ratio"}
+    native_phase_requested = query_block == 128 or bool(
         {"nvfp4_ratio", "int8_ratio", "mxfp8_ratio"} & set(config)
     )
-    if sm120_requested:
+    if native_phase_requested:
         if "fp8_ratio" in config:
-            raise ValueError("SM120 uses NVFP4/INT8/MXFP8/FP16 phases, not fp8_ratio")
-        if set(config) & sm120_required != sm120_required:
+            raise ValueError("native phase configs use NVFP4/INT8/MXFP8/FP16, not fp8_ratio")
+        if set(config) & native_phase_required != native_phase_required:
             raise ValueError(
-                "SM120 config must provide nvfp4_ratio, int8_ratio, and fp16_ratio"
+                "native phase config must provide nvfp4_ratio, int8_ratio, and fp16_ratio"
             )
-        nvfp4 = _finite_ratio(
-            config["nvfp4_ratio"], "nvfp4_ratio", allow_one=True
-        )
+        nvfp4 = _finite_ratio(config["nvfp4_ratio"], "nvfp4_ratio", allow_one=True)
         int8 = _finite_ratio(config["int8_ratio"], "int8_ratio", allow_one=True)
-        mxfp8 = _finite_ratio(
-            config.get("mxfp8_ratio", 0.0), "mxfp8_ratio", allow_one=True
-        )
+        mxfp8 = _finite_ratio(config.get("mxfp8_ratio", 0.0), "mxfp8_ratio", allow_one=True)
         fp16 = _finite_ratio(config["fp16_ratio"], "fp16_ratio", allow_one=True)
         if int8 > 0.0 and mxfp8 > 0.0:
             raise ValueError("INT8 and MXFP8 are alternative middle phases")
@@ -287,17 +330,13 @@ def _apply_mpa_config(profile: dict[str, Any], config: dict[str, Any]) -> None:
     elif "fp8_ratio" in config:
         fp8 = _finite_ratio(config["fp8_ratio"], "fp8_ratio")
         fp16 = _finite_ratio(config["fp16_ratio"], "fp16_ratio")
-        if (
-            fp8 <= 0.0
-            or fp16 <= 0.0
-            or not math.isclose(fp8 + fp16, 1.0, abs_tol=1e-6)
-        ):
+        if fp8 <= 0.0 or fp16 <= 0.0 or not math.isclose(fp8 + fp16, 1.0, abs_tol=1e-6):
             raise ValueError("FP8/FP16 ratios must be positive and sum to one")
         profile["precision"] = {"fp8": fp8, "fp16": fp16}
 
     if "layer_precision_bands" in config:
         if "nvfp4" not in profile["precision"]:
-            raise ValueError("layer_precision_bands require SM120 precision")
+            raise ValueError("layer_precision_bands require native phase precision")
         bands = config["layer_precision_bands"]
         if not isinstance(bands, list):
             raise TypeError("layer_precision_bands must be an array")
@@ -306,8 +345,7 @@ def _apply_mpa_config(profile: dict[str, Any], config: dict[str, Any]) -> None:
         for band in bands:
             if not isinstance(band, list) or len(band) not in (5, 6):
                 raise ValueError(
-                    "each layer precision band must be "
-                    "[first,last,NVFP4,INT8,[MXFP8,]FP16]"
+                    "each layer precision band must be [first,last,NVFP4,INT8,[MXFP8,]FP16]"
                 )
             first, last, *ratios = band
             if (
@@ -318,8 +356,7 @@ def _apply_mpa_config(profile: dict[str, Any], config: dict[str, Any]) -> None:
             ):
                 raise ValueError("layer precision bands must be sorted and disjoint")
             values = tuple(
-                _finite_ratio(value, "layer precision ratio", allow_one=True)
-                for value in ratios
+                _finite_ratio(value, "layer precision ratio", allow_one=True) for value in ratios
             )
             if len(values) == 3:
                 values = (values[0], values[1], 0.0, values[2])
@@ -332,9 +369,7 @@ def _apply_mpa_config(profile: dict[str, Any], config: dict[str, Any]) -> None:
         profile["layer_precision_bands"] = tuple(resolved)
 
     if "sparsity_ratio" in config:
-        profile["video_sparsity_ratio"] = _finite_ratio(
-            config["sparsity_ratio"], "sparsity_ratio"
-        )
+        profile["video_sparsity_ratio"] = _finite_ratio(config["sparsity_ratio"], "sparsity_ratio")
 
     for name in ("dense_first_steps", "dense_first_layers"):
         if name not in config:
@@ -372,14 +407,28 @@ def _apply_mpa_config(profile: dict[str, Any], config: dict[str, Any]) -> None:
                 or not 0 <= first < last <= 50
                 or first < previous_end
             ):
-                raise ValueError(
-                    "layer sparsity bands must be sorted, disjoint, and within 0..50"
-                )
-            resolved_bands.append(
-                (first, last, _finite_ratio(sparsity, "band sparsity"))
-            )
+                raise ValueError("layer sparsity bands must be sorted, disjoint, and within 0..50")
+            resolved_bands.append((first, last, _finite_ratio(sparsity, "band sparsity")))
             previous_end = last
         profile["layer_sparsity_bands"] = tuple(resolved_bands)
+
+    k_tail_enabled = profile.get("draftmap_proxy", "mean") in (
+        "k_tail_r1",
+        "k_tail_r2",
+    ) or any(
+        proxy in ("k_tail_r1", "k_tail_r2")
+        for _, _, proxy in profile.get("layer_draftmap_bands", ())
+    )
+    if k_tail_enabled and (query_block != 64 or "nvfp4" not in profile.get("precision", {})):
+        raise ValueError("K-tail requires portable Q64 native phases")
+    if k_tail_enabled and profile.get("diag_jensen", False):
+        raise ValueError("K-tail cannot be combined with diag_jensen")
+    if k_tail_enabled:
+        profile["route_note"] = (
+            "native Mean-Q/K-tail probability on configured SM120 Q64 layers; "
+            "exact per-head global top-k; missing same-frame ragged adjacency "
+            "anchors replace the weakest lowest-precision selections"
+        )
 
     base = float(profile["video_sparsity_ratio"])
     per_layer = [base] * 50
@@ -411,9 +460,7 @@ def _resolved_candidate(
             or fp16_ratio <= 0.0
             or not math.isclose(fp8_ratio + fp16_ratio, 1.0, abs_tol=1e-6)
         ):
-            raise ValueError(
-                "FP8/FP16 ratios must be finite, positive, and sum to one"
-            )
+            raise ValueError("FP8/FP16 ratios must be finite, positive, and sum to one")
     if name == "dense":
         if mpa_config is not None:
             raise ValueError("--mpa-config is only valid for MPA")
@@ -447,14 +494,19 @@ def _resolved_candidate(
     return {
         "kind": "mpa",
         "precision": profile.pop(
-            "precision", {"fp8": 0.8, "fp16": 0.2}
+            "precision",
+            {"nvfp4": 0.0, "int8": 1.0, "mxfp8": 0.0, "fp16": 0.0},
         ),
         "dense_first_steps": 10,
         "dense_first_layers": 2,
         "scheduled_dense": "original-dtype torch SDPA",
-        "prefix_query_overwrite": "original-dtype torch SDPA",
-        "prefix_kv_precision": profile.pop("prefix_kv_precision", "auto"),
-        "prefix_query_precision": profile.pop("prefix_query_precision", "auto"),
+        "prefix_query_overwrite": (
+            "native dense-sequential INT8"
+            if profile.get("prefix_query_precision", "int8") == "int8"
+            else "original-dtype torch SDPA"
+        ),
+        "prefix_kv_precision": profile.pop("prefix_kv_precision", "int8"),
+        "prefix_query_precision": profile.pop("prefix_query_precision", "int8"),
         **profile,
     }
 
@@ -494,18 +546,24 @@ def _python_tree_sha256(root: Path) -> str:
 def _attention_precision_note(candidate: dict[str, Any]) -> str:
     kind = candidate["kind"]
     if kind == "dense":
-        return "Dense attention uses original-dtype torch SDPA. Model weights are common pruned FP8."
+        return (
+            "Dense attention uses original-dtype torch SDPA. Model weights are common pruned FP8."
+        )
     if kind == "official-sol":
-        return "Sol-Attn uses its BF16 Triton sparse kernel and exact BF16 prefix handling. Model weights are common pruned FP8."
+        return (
+            "Sol-Attn uses its BF16 Triton sparse kernel and exact BF16 prefix handling. "
+            "Model weights are common pruned FP8."
+        )
     phase_ratios = "/".join(
-        f"{name.upper()}={float(ratio):g}"
-        for name, ratio in candidate.get("precision", {}).items()
+        f"{name.upper()}={float(ratio):g}" for name, ratio in candidate.get("precision", {}).items()
     )
+    prefix_query = str(candidate.get("prefix_query_precision", "int8")).upper()
+    prefix_kv = str(candidate.get("prefix_kv_precision", "int8")).upper()
     return (
-        "Scheduled dense calls and sparse-call prefix-query overwrites use "
-        "the original-dtype torch SDPA, matching Sol-H3. Active native K64 "
-        f"sparse attention assigns retained video blocks {phase_ratios}; "
-        "exact prefix K/V is FP16. Model weights are common pruned FP8."
+        "Scheduled dense calls use original-dtype torch SDPA. Sparse-call "
+        f"prefix queries use {prefix_query}; prefix K/V uses {prefix_kv}; "
+        f"retained video blocks use {phase_ratios}. Model weights are common "
+        "pruned FP8."
     )
 
 
@@ -527,9 +585,7 @@ def _configure_cuda_driver_link(cache_root: Path) -> None:
     """Expose 64-bit libcuda linker names for Triton's runtime helper build."""
 
     library_paths = [
-        Path(item)
-        for item in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)
-        if item
+        Path(item) for item in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep) if item
     ]
     library_paths.extend(
         (
@@ -597,15 +653,15 @@ def _configure_environment(args: argparse.Namespace) -> tuple[Path, Path]:
     os.environ.setdefault("H3_DIFFUSERS_SRC", str(args.diffusers_src.resolve() / "src"))
     os.environ.setdefault("H3_MODEL_ROOT", str(args.model_root.resolve()))
     os.environ.setdefault("H3_DIT_CHECKPOINT", str(args.checkpoint.resolve()))
-    os.environ.setdefault("H3_SOL_ATTN_ROOT", str(args.sol_root.resolve() / "techniques/sparse_backends"))
+    os.environ.setdefault(
+        "H3_SOL_ATTN_ROOT", str(args.sol_root.resolve() / "techniques/sparse_backends")
+    )
     local_rank = os.environ.get("LOCAL_RANK", "0")
     temporary_root = Path(os.environ.get("TMPDIR", "/tmp"))
     cache_root = temporary_root / f"anemoi-mpa-{os.getuid()}"
     _configure_cuda_driver_link(cache_root)
     os.environ.setdefault("HF_HOME", str(cache_root / "hf"))
-    os.environ.setdefault(
-        "TRITON_CACHE_DIR", str(cache_root / f"triton-rank{local_rank}")
-    )
+    os.environ.setdefault("TRITON_CACHE_DIR", str(cache_root / f"triton-rank{local_rank}"))
     os.environ.setdefault(
         "TORCHINDUCTOR_CACHE_DIR",
         str(cache_root / f"inductor-rank{local_rank}"),
@@ -695,7 +751,8 @@ def _make_mpa_attention(
     from anemoi.models.minimax_h3 import H3MPAAttention, H3MPAConfig
 
     precision = candidate.get(
-        "precision", {"fp8": 0.8, "fp16": 0.2}
+        "precision",
+        {"nvfp4": 0.0, "int8": 1.0, "mxfp8": 0.0, "fp16": 0.0},
     )
     query_block = int(candidate.get("query_block_size", 64))
     return H3MPAAttention(
@@ -704,10 +761,8 @@ def _make_mpa_attention(
             prefix_tokens=prefix_tokens,
             sparsity_ratio=float(candidate.get("video_sparsity_ratio", 0.8)),
             query_block_size=query_block,
-            prefix_kv_precision=str(candidate.get("prefix_kv_precision", "auto")),
-            prefix_query_precision=str(
-                candidate.get("prefix_query_precision", "auto")
-            ),
+            prefix_kv_precision=str(candidate.get("prefix_kv_precision", "int8")),
+            prefix_query_precision=str(candidate.get("prefix_query_precision", "int8")),
             fp8_ratio=float(precision.get("fp8", 0.0)),
             nvfp4_ratio=float(precision.get("nvfp4", 0.0)),
             int8_ratio=float(precision.get("int8", 0.0)),
@@ -722,8 +777,12 @@ def _make_mpa_attention(
             layer_precision_bands=tuple(
                 tuple(band) for band in candidate.get("layer_precision_bands", ())
             ),
+            draftmap_proxy=str(candidate.get("draftmap_proxy", "mean")),
+            layer_draftmap_bands=tuple(
+                tuple(band) for band in candidate.get("layer_draftmap_bands", ())
+            ),
             diag_jensen=candidate.get("diag_jensen", False),
-            enable_anchors=candidate.get("enable_anchors", True),
+            enable_anchors=candidate.get("enable_anchors", False),
             strict=True,
         )
     )
@@ -857,9 +916,7 @@ def _decode_existing(args: argparse.Namespace) -> int:
         )
     results = json.loads(result_path.read_text())
     if results.get("candidate") != args.candidate:
-        raise ValueError(
-            f"saved candidate {results.get('candidate')!r} != {args.candidate!r}"
-        )
+        raise ValueError(f"saved candidate {results.get('candidate')!r} != {args.candidate!r}")
     if results.get("status") not in ("denoised", "complete"):
         raise ValueError(f"saved benchmark status is {results.get('status')!r}")
     artifact = torch.load(artifact_path, map_location="cpu", weights_only=True)
@@ -912,12 +969,10 @@ def _main_distributed(args: argparse.Namespace, candidate: dict[str, Any]) -> in
         checkpoint_status = observed
         source_provenance = {
             "sol_h3_integration_sha256": _sha256(
-                args.sol_root.resolve()
-                / "models/minimax_h3/optimized/sol_attn_h3.py"
+                args.sol_root.resolve() / "models/minimax_h3/optimized/sol_attn_h3.py"
             ),
             "sol_attn_python_tree_sha256": _python_tree_sha256(
-                args.sol_root.resolve()
-                / "techniques/sparse_backends/sol_attn"
+                args.sol_root.resolve() / "techniques/sparse_backends/sol_attn"
             ),
             "runner_sha256": _sha256(Path(__file__).resolve()),
         }
@@ -941,9 +996,7 @@ def _main_distributed(args: argparse.Namespace, candidate: dict[str, Any]) -> in
         video_latent_num_frames,
     )
 
-    audio_tokens = int(audio_latent_num_frames(args.num_frames)) * int(
-        MINIMAX_H3_AUDIO_CHANNELS
-    )
+    audio_tokens = int(audio_latent_num_frames(args.num_frames)) * int(MINIMAX_H3_AUDIO_CHANNELS)
     prefix_tokens = text_tokens + audio_tokens
     video_shape = (
         int(video_latent_num_frames(args.num_frames)),
@@ -971,15 +1024,11 @@ def _main_distributed(args: argparse.Namespace, candidate: dict[str, Any]) -> in
         video_shape=video_shape,
     )
     transformer, build = _build_transformer(bench, args.checkpoint, args.model_root)
-    group_offload = _enable_long_sequence_group_offload(
-        transformer, sequence_tokens
-    )
+    group_offload = _enable_long_sequence_group_offload(transformer, sequence_tokens)
     if group_offload is not None:
         torch.cuda.empty_cache()
     build["long_sequence_group_offload"] = group_offload
-    build["post_offload_allocated_mib"] = round(
-        torch.cuda.memory_allocated() / 2**20, 1
-    )
+    build["post_offload_allocated_mib"] = round(torch.cuda.memory_allocated() / 2**20, 1)
     denoise_pipe = bench._build_denoise_pipe(transformer)
 
     _switch_to_optimized_modules(args.sol_root.resolve() / "models/minimax_h3/optimized")
@@ -1034,11 +1083,7 @@ def _main_distributed(args: argparse.Namespace, candidate: dict[str, Any]) -> in
             video_shape=video_shape,
         )
 
-    transfer_timer = (
-        bench.OffloadTransferTimer(transformer)
-        if group_offload is not None
-        else None
-    )
+    transfer_timer = bench.OffloadTransferTimer(transformer) if group_offload is not None else None
     if transfer_timer is not None:
         transfer_timer.install()
     timer = bench.EvalTimer(transformer, excluded=transfer_timer)
@@ -1057,9 +1102,7 @@ def _main_distributed(args: argparse.Namespace, candidate: dict[str, Any]) -> in
     samples = timer.samples_ms()
     resident_samples = timer.resident_samples_ms()
     excluded_samples = timer.excluded_samples_ms()
-    artifact = _artifact_from_state(
-        state, args, prompt_sha256=prompt_sha256
-    )
+    artifact = _artifact_from_state(state, args, prompt_sha256=prompt_sha256)
     if attention is not None:
         if candidate["kind"] == "official-sol":
             attention._close_request()
@@ -1097,9 +1140,10 @@ def _main_distributed(args: argparse.Namespace, candidate: dict[str, Any]) -> in
         assert source_provenance is not None
         latent_path = output_dir / "denoised_state.pt"
         torch.save(artifact, latent_path)
-        consistent = len({item["video_latent_sha256"] for item in per_rank}) == 1 and len(
-            {item["audio_latent_sha256"] for item in per_rank}
-        ) == 1
+        consistent = (
+            len({item["video_latent_sha256"] for item in per_rank}) == 1
+            and len({item["audio_latent_sha256"] for item in per_rank}) == 1
+        )
         if not consistent:
             raise RuntimeError("Ulysses ranks produced different gathered latent states")
         results = {
@@ -1229,9 +1273,7 @@ def main() -> int:
         local_prompts = load_prompt_registry(args.prompt_registry.resolve())
         protected = sorted(set(PROMPTS) & set(local_prompts))
         if protected:
-            raise ValueError(
-                f"prompt registry cannot replace built-in prompts: {protected}"
-            )
+            raise ValueError(f"prompt registry cannot replace built-in prompts: {protected}")
         prompts.update(local_prompts)
     try:
         default_conditioning, args.expected_prompt_sha256 = prompts[args.prompt_id]
@@ -1252,9 +1294,7 @@ def main() -> int:
         args.candidate,
         args.fp8_ratio,
         args.fp16_ratio,
-        _read_mpa_config(args.mpa_config)
-        if args.candidate == MPA_MAINLINE_CANDIDATE
-        else None,
+        _read_mpa_config(args.mpa_config) if args.candidate == MPA_MAINLINE_CANDIDATE else None,
     )
     if args.print_config:
         print(json.dumps({"candidate": args.candidate, "policy": candidate}, indent=2))

@@ -65,5 +65,6 @@ against the loaded model before diffusion starts.
 ## Precision Scope
 
 This configuration object belongs to the generic BF16 Draft Attention backend.
-MiniMax-H3 MPA uses its validated layer budget and FP8/FP16 split directly in
-`anemoi.models.minimax_h3.runner`; it does not consume this legacy JSON schema.
+MiniMax-H3 MPA uses its validated layer budget and architecture-neutral
+pure-INT8 policy directly in `anemoi.models.minimax_h3.runner`; it does not
+consume this legacy JSON schema.

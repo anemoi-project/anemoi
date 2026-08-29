@@ -15,11 +15,6 @@ fi
 export CUDA_HOME="${cuda_root}"
 export PATH="${cuda_root}/bin:${PATH}"
 components="${MPA_BUILD_COMPONENTS:-sm89}"
-default_arch="8.9"
-if [[ ",${components}," == *",sm120_q64,"* ]]; then
-  default_arch="12.0a"
-fi
-export TORCH_CUDA_ARCH_LIST="${MPA_TORCH_CUDA_ARCH_LIST:-${default_arch}}"
 export MAX_JOBS="${MPA_MAX_JOBS:-4}"
 
 build_root="${MPA_BUILD_ROOT:-${TMPDIR:-/tmp}/anemoi-mpa-build-${UID}}"

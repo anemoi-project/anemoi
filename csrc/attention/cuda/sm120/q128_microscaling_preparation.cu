@@ -1016,8 +1016,8 @@ H3SM120Prepared prepare_h3_sm120_operands(
       query.device() == key.device() && query.device() == value.device(),
       "H3 Q/K/V devices must match");
   TORCH_CHECK(
-      prefix_tokens > 0 && prefix_tokens < query.size(2),
-      "prefix_tokens must split the H3 sequence");
+      prefix_tokens >= 0 && prefix_tokens < query.size(2),
+      "prefix_tokens must be nonnegative and precede the video tokens");
   TORCH_CHECK(
       query_block_size == 64 || query_block_size == 128,
       "query_block_size must be 64 or 128");

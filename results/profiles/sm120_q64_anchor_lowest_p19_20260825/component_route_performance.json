@@ -1,6 +1,6 @@
 {
   "schema": "anemoi.diagnostic.sm120_q64_anchor_route_perf.v3",
-  "capture": "p19_dense_step10_layer02.pt",
+  "capture": "/home/zju/.config/codex/worktrees/evg/sm120-ppt-evidence-20260823/outputs/sm120_q64_operator_audit_20260824/p19_dense_step10_layer02/captures/step10_layer02.pt",
   "capture_sha256": "4261712483fec6f2e9203fc686f89b6b2bac21a91873377abd62e47a4a85a756",
   "implementation_commit": "12dc583dd98672b313bcf46f0ab53daaa8f000dc",
   "extension_sha256": "049d15c15f9abb281fb045fcb234a3390b2a9548fb85502d0ffde0c6b0d30c23",

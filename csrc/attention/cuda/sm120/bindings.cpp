@@ -10,6 +10,12 @@ TORCH_LIBRARY_FRAGMENT(mixed_attention, m) {
   m.def(
       "sm120_h3_draft_probability(Tensor q_pool, Tensor k_pool) -> Tensor");
   m.def(
+      "sm120_h3_k_tail_r1_probability(Tensor q_pool, Tensor k_pool, "
+      "Tensor packed_k, Tensor valid_counts, int prefix_blocks) -> Tensor");
+  m.def(
+      "sm120_h3_k_tail_r2_probability(Tensor q_pool, Tensor k_pool, "
+      "Tensor packed_k, Tensor valid_counts, int prefix_blocks) -> Tensor");
+  m.def(
       "sm120_h3_route_precision(Tensor probability, int n16, int n8, int n4, "
       "Tensor? anchors, Tensor? anchor_ids, int anchor_count) "
       "-> (Tensor, Tensor, Tensor, Tensor)");
@@ -168,6 +174,12 @@ TORCH_LIBRARY_FRAGMENT(mixed_attention, m) {
 
 TORCH_LIBRARY_IMPL(mixed_attention, CUDA, m) {
   m.impl("sm120_h3_draft_probability", &sm120_h3_draft_probability);
+  m.impl(
+      "sm120_h3_k_tail_r1_probability",
+      &sm120_h3_k_tail_r1_probability);
+  m.impl(
+      "sm120_h3_k_tail_r2_probability",
+      &sm120_h3_k_tail_r2_probability);
   m.impl("sm120_h3_route_precision", &sm120_h3_route_precision);
   m.impl("sm120_h3_materialize_route", &sm120_h3_materialize_route);
   m.impl(

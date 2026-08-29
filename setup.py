@@ -11,7 +11,6 @@ from pathlib import Path
 
 from setuptools import setup
 
-
 ROOT = Path(__file__).resolve().parent
 
 
@@ -22,15 +21,19 @@ def _source(path: Path) -> str:
 def _requested_components() -> set[str]:
     value = os.environ.get("MPA_BUILD_COMPONENTS", "sm89")
     requested = {item.strip() for item in value.split(",") if item.strip()}
-    aliases = {"attention": "sm89"}
+    aliases = {
+        "attention": ("sm89",),
+        "sm120": ("sm89", "sm120_q64"),
+    }
     known = {"sm89", "sm120_q64", *aliases}
     unknown = requested - known
     if unknown:
         raise RuntimeError(
-            "MPA_BUILD_COMPONENTS contains unknown component(s): "
-            + ", ".join(sorted(unknown))
+            "MPA_BUILD_COMPONENTS contains unknown component(s): " + ", ".join(sorted(unknown))
         )
-    return {aliases.get(component, component) for component in requested}
+    return {
+        resolved for component in requested for resolved in aliases.get(component, (component,))
+    }
 
 
 def _extensions():
@@ -40,6 +43,16 @@ def _extensions():
         "YES",
     }:
         return [], {}
+
+    components = _requested_components()
+    default_arch = "12.0a" if "sm120_q64" in components else "8.9"
+    os.environ["TORCH_CUDA_ARCH_LIST"] = os.environ.get(
+        "MPA_CUDA_ARCH_LIST",
+        os.environ.get(
+            "MPA_TORCH_CUDA_ARCH_LIST",
+            os.environ.get("TORCH_CUDA_ARCH_LIST", default_arch),
+        ),
+    )
 
     try:
         from torch.utils.cpp_extension import BuildExtension, CUDAExtension
@@ -52,7 +65,6 @@ def _extensions():
             "`python -m pip install . --no-build-isolation`."
         ) from exc
 
-    components = _requested_components()
     modules = []
 
     if "sm89" in components:
@@ -64,11 +76,13 @@ def _extensions():
                 name="anemoi.layers.attention.mpa._cuda_attention",
                 sources=[
                     _source(sm89 / "bindings.cpp"),
+                    _source(sm89 / "h3_route_precision.cu"),
                     _source(sm89 / "k64_attention_host.cu"),
                     _source(sm89 / "value_preprocess.cu"),
                     _source(sm89 / "raster_preprocess.cu"),
                     _source(sm89 / "output_assembly.cu"),
                     _source(sm89 / "instantiations" / "inst_k64_d128.cu"),
+                    _source(sm89 / "instantiations" / "inst_k64_d128_int8_dense.cu"),
                     _source(sm89 / "instantiations" / "inst_q128_k64_d128.cu"),
                 ],
                 include_dirs=[

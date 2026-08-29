@@ -216,9 +216,9 @@ void assemble_fused_visual_text_output_kernel(
   }
 }
 
-template <typename OutputT>
+template <typename PrefixT, typename OutputT>
 __global__ __launch_bounds__(kThreads) void assemble_h3_k64_output_kernel(
-    const OutputT* __restrict__ prefix_output_bhsd,
+    const PrefixT* __restrict__ prefix_output_bhsd,
     const half* __restrict__ video_output_bhsd,
     const int64_t* __restrict__ video_inverse_indices,
     OutputT* __restrict__ output_bshd,
@@ -247,8 +247,16 @@ __global__ __launch_bounds__(kThreads) void assemble_h3_k64_output_kernel(
           batch * prefix_batch_stride + head * prefix_head_stride +
           sequence * prefix_sequence_stride;
       for (int64_t column = lane; column < dimension; column += kWarpSize) {
-        output_bshd[output_offset + column] =
-            prefix_output_bhsd[source_offset + column];
+        if constexpr (std::is_same_v<PrefixT, OutputT>) {
+          output_bshd[output_offset + column] =
+              prefix_output_bhsd[source_offset + column];
+        } else if constexpr (std::is_same_v<OutputT, half>) {
+          output_bshd[output_offset + column] = __float2half_rn(
+              __bfloat162float(prefix_output_bhsd[source_offset + column]));
+        } else {
+          output_bshd[output_offset + column] = __float2bfloat16_rn(
+              __half2float(prefix_output_bhsd[source_offset + column]));
+        }
       }
     } else {
       const int64_t video_token = sequence - prefix_tokens;
@@ -274,7 +282,8 @@ __global__ __launch_bounds__(kThreads) void assemble_h3_k64_output_kernel(
 torch::Tensor assemble_h3_k64_output(
     torch::Tensor prefix_output_bhsd,
     torch::Tensor video_output_bhsd_fp16,
-    torch::Tensor video_inverse_indices) {
+    torch::Tensor video_inverse_indices,
+    std::optional<at::ScalarType> output_dtype) {
   TORCH_CHECK(
       prefix_output_bhsd.defined() && prefix_output_bhsd.is_cuda(),
       "prefix_output_bhsd must be a defined CUDA tensor");
@@ -284,6 +293,12 @@ torch::Tensor assemble_h3_k64_output(
       prefix_output_bhsd.scalar_type() == at::ScalarType::Half ||
           prefix_output_bhsd.scalar_type() == at::ScalarType::BFloat16,
       "prefix_output_bhsd must be FP16 or BF16");
+  const at::ScalarType resolved_output_dtype =
+      output_dtype.value_or(prefix_output_bhsd.scalar_type());
+  TORCH_CHECK(
+      resolved_output_dtype == at::ScalarType::Half ||
+          resolved_output_dtype == at::ScalarType::BFloat16,
+      "H3 output dtype must be FP16 or BF16");
   TORCH_CHECK(
       video_output_bhsd_fp16.scalar_type() == at::ScalarType::Half,
       "video_output_bhsd_fp16 must be FP16");
@@ -311,7 +326,7 @@ torch::Tensor assemble_h3_k64_output(
   const int64_t video_tokens = video_inverse_indices.numel();
   const int64_t video_capacity = video_output_bhsd_fp16.size(2);
   TORCH_CHECK(
-      batch > 0 && heads > 0 && prefix_tokens > 0 && dimension > 0 &&
+      batch > 0 && heads > 0 && prefix_tokens >= 0 && dimension > 0 &&
           video_tokens > 0 && video_capacity >= video_tokens,
       "H3 output assembly dimensions must be positive and capacity-valid");
   TORCH_CHECK(
@@ -339,7 +354,7 @@ torch::Tensor assemble_h3_k64_output(
       output_rows, dimension, "H3 K64 output elements");
   auto output = torch::empty(
       {batch, sequence_tokens, heads, dimension},
-      prefix_output_bhsd.options());
+      prefix_output_bhsd.options().dtype(resolved_output_dtype));
   const int64_t blocks_needed =
       (output_rows + kWarpsPerBlock - 1) / kWarpsPerBlock;
   const int64_t queued_grid_cap = checked_nonnegative_product(
@@ -348,8 +363,9 @@ torch::Tensor assemble_h3_k64_output(
   const int64_t grid_x = std::min(blocks_needed, queued_grid_cap);
   const cudaStream_t stream =
       at::cuda::getCurrentCUDAStream(prefix_output_bhsd.get_device());
-  if (prefix_output_bhsd.scalar_type() == at::ScalarType::Half) {
-    assemble_h3_k64_output_kernel<<<grid_x, kThreads, 0, stream>>>(
+  if (prefix_output_bhsd.scalar_type() == at::ScalarType::Half &&
+      resolved_output_dtype == at::ScalarType::Half) {
+    assemble_h3_k64_output_kernel<half, half><<<grid_x, kThreads, 0, stream>>>(
         reinterpret_cast<const half*>(prefix_output_bhsd.data_ptr<at::Half>()),
         reinterpret_cast<const half*>(video_output_bhsd_fp16.data_ptr<at::Half>()),
         video_inverse_indices.data_ptr<int64_t>(),
@@ -358,13 +374,37 @@ torch::Tensor assemble_h3_k64_output(
         prefix_output_bhsd.stride(2),
         prefix_tokens, video_tokens, video_capacity, heads, dimension,
         output_rows);
-  } else {
-    assemble_h3_k64_output_kernel<<<grid_x, kThreads, 0, stream>>>(
+  } else if (prefix_output_bhsd.scalar_type() == at::ScalarType::Half) {
+    assemble_h3_k64_output_kernel<half, __nv_bfloat16>
+        <<<grid_x, kThreads, 0, stream>>>(
+        reinterpret_cast<const half*>(prefix_output_bhsd.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(video_output_bhsd_fp16.data_ptr<at::Half>()),
+        video_inverse_indices.data_ptr<int64_t>(),
+        reinterpret_cast<__nv_bfloat16*>(output.data_ptr<at::BFloat16>()),
+        prefix_output_bhsd.stride(0), prefix_output_bhsd.stride(1),
+        prefix_output_bhsd.stride(2),
+        prefix_tokens, video_tokens, video_capacity, heads, dimension,
+        output_rows);
+  } else if (resolved_output_dtype == at::ScalarType::BFloat16) {
+    assemble_h3_k64_output_kernel<__nv_bfloat16, __nv_bfloat16>
+        <<<grid_x, kThreads, 0, stream>>>(
         reinterpret_cast<const __nv_bfloat16*>(
             prefix_output_bhsd.data_ptr<at::BFloat16>()),
         reinterpret_cast<const half*>(video_output_bhsd_fp16.data_ptr<at::Half>()),
         video_inverse_indices.data_ptr<int64_t>(),
         reinterpret_cast<__nv_bfloat16*>(output.data_ptr<at::BFloat16>()),
+        prefix_output_bhsd.stride(0), prefix_output_bhsd.stride(1),
+        prefix_output_bhsd.stride(2),
+        prefix_tokens, video_tokens, video_capacity, heads, dimension,
+        output_rows);
+  } else {
+    assemble_h3_k64_output_kernel<__nv_bfloat16, half>
+        <<<grid_x, kThreads, 0, stream>>>(
+        reinterpret_cast<const __nv_bfloat16*>(
+            prefix_output_bhsd.data_ptr<at::BFloat16>()),
+        reinterpret_cast<const half*>(video_output_bhsd_fp16.data_ptr<at::Half>()),
+        video_inverse_indices.data_ptr<int64_t>(),
+        reinterpret_cast<half*>(output.data_ptr<at::Half>()),
         prefix_output_bhsd.stride(0), prefix_output_bhsd.stride(1),
         prefix_output_bhsd.stride(2),
         prefix_tokens, video_tokens, video_capacity, heads, dimension,
