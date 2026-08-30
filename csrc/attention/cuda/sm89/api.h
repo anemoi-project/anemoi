@@ -5,6 +5,22 @@
 #include <optional>
 #include <tuple>
 
+using H3SM89Int8Prepared = std::tuple<
+    torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+    torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+    torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+    torch::Tensor, torch::Tensor>;
+
+// Architecture-owned DraftMap scorer. Mean and optional MaxPool logits use
+// Tensor Core GEMMs; the interior-weight path normalizes and fuses both maps
+// in one CUDA kernel while weights 0 and 1 retain single-GEMM fast paths.
+torch::Tensor sm89_h3_draft_probability(
+    torch::Tensor q_pool,
+    torch::Tensor k_pool,
+    std::optional<torch::Tensor> q_max_pool,
+    std::optional<torch::Tensor> k_max_pool,
+    double maxpool_weight);
+
 // Stable global DraftMap route with compact Anchor correction. The returned
 // logical IDs are phase-packed but do not yet contain physical prefix blocks.
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
@@ -36,6 +52,17 @@ sm89_h3_materialize_route(
 // physical block has an explicit valid-token count so partial compact blocks
 // are masked in both score and value accumulation.
 std::tuple<torch::Tensor, torch::Tensor> k64_fp16_attention_forward(
+    torch::Tensor query,
+    torch::Tensor key,
+    torch::Tensor value,
+    torch::Tensor block_ids,
+    torch::Tensor block_counts,
+    torch::Tensor valid_k_counts,
+    double softmax_scale);
+
+// Audit-only Q128 counterpart used to measure the standalone FP16 phase
+// floor on the same physical K64 route as the Q128 mixed specialization.
+std::tuple<torch::Tensor, torch::Tensor> q128_k64_fp16_attention_forward(
     torch::Tensor query,
     torch::Tensor key,
     torch::Tensor value,
@@ -86,6 +113,48 @@ std::tuple<torch::Tensor, torch::Tensor> q128_k64_mixed_attention_forward(
     int64_t fp16_prefix_blocks,
     double softmax_scale);
 
+// K-smooth counterparts consume centered INT8 K plus the source-bound FP16
+// mean. Only FP16 Q and the mean cross the phase boundary; K/V rescue state
+// remains phase-local.
+std::tuple<torch::Tensor, torch::Tensor> k64_smooth_mixed_attention_forward(
+    torch::Tensor q8,
+    torch::Tensor k8,
+    torch::Tensor v8,
+    torch::Tensor q16,
+    torch::Tensor k16,
+    torch::Tensor v16,
+    torch::Tensor key_mean,
+    torch::Tensor fp8_block_ids,
+    torch::Tensor fp8_block_counts,
+    torch::Tensor fp16_block_ids,
+    torch::Tensor fp16_block_counts,
+    torch::Tensor q_scale,
+    torch::Tensor k_scale,
+    torch::Tensor v_scale,
+    torch::Tensor valid_k_counts,
+    int64_t fp16_prefix_blocks,
+    double softmax_scale);
+
+std::tuple<torch::Tensor, torch::Tensor>
+q128_k64_smooth_mixed_attention_forward(
+    torch::Tensor q8,
+    torch::Tensor k8,
+    torch::Tensor v8,
+    torch::Tensor q16,
+    torch::Tensor k16,
+    torch::Tensor v16,
+    torch::Tensor key_mean,
+    torch::Tensor fp8_block_ids,
+    torch::Tensor fp8_block_counts,
+    torch::Tensor fp16_block_ids,
+    torch::Tensor fp16_block_counts,
+    torch::Tensor q_scale,
+    torch::Tensor k_scale,
+    torch::Tensor v_scale,
+    torch::Tensor valid_k_counts,
+    int64_t fp16_prefix_blocks,
+    double softmax_scale);
+
 // Audit-only pure low-precision entry for isolating the inherited
 // Sparge/Sage wait_group<1> pipeline on the same absolute Q64xK64 route.
 std::tuple<torch::Tensor, torch::Tensor> k64_fp8_attention_forward(
@@ -104,6 +173,35 @@ std::tuple<torch::Tensor, torch::Tensor> q128_k64_fp8_attention_forward(
     torch::Tensor q8,
     torch::Tensor k8,
     torch::Tensor v8,
+    torch::Tensor block_ids,
+    torch::Tensor block_counts,
+    torch::Tensor q_scale,
+    torch::Tensor k_scale,
+    torch::Tensor v_scale,
+    torch::Tensor valid_k_counts,
+    double softmax_scale);
+
+std::tuple<torch::Tensor, torch::Tensor> k64_smooth_fp8_attention_forward(
+    torch::Tensor q8,
+    torch::Tensor k8,
+    torch::Tensor v8,
+    torch::Tensor q16,
+    torch::Tensor key_mean,
+    torch::Tensor block_ids,
+    torch::Tensor block_counts,
+    torch::Tensor q_scale,
+    torch::Tensor k_scale,
+    torch::Tensor v_scale,
+    torch::Tensor valid_k_counts,
+    double softmax_scale);
+
+std::tuple<torch::Tensor, torch::Tensor>
+q128_k64_smooth_fp8_attention_forward(
+    torch::Tensor q8,
+    torch::Tensor k8,
+    torch::Tensor v8,
+    torch::Tensor q16,
+    torch::Tensor key_mean,
     torch::Tensor block_ids,
     torch::Tensor block_counts,
     torch::Tensor q_scale,
@@ -147,6 +245,23 @@ pack_h3_k64_qkv_fp16(
     torch::Tensor video_token_indices,
     torch::Tensor video_slot_valid,
     int64_t prefix_tokens);
+
+// Donor-first SM89 INT8 preparation.  The no-smooth specialization reads each
+// raw Q/K element once and produces packed FP16 rescue operands, DraftMap
+// pools, INT8 operands, and their scales from the same shared-memory tile.
+// Smooth-K retains the one raw-K read while deferring centered K quantization
+// until a compact block-sum reduction has produced the per-head K mean.
+H3SM89Int8Prepared prepare_h3_sm89_int8_operands(
+    torch::Tensor query,
+    torch::Tensor key,
+    torch::Tensor value,
+    torch::Tensor video_token_indices,
+    torch::Tensor video_slot_valid,
+    torch::Tensor video_valid_counts,
+    int64_t prefix_tokens,
+    int64_t query_block_size,
+    bool smooth_k,
+    bool has_maxpool);
 
 // One-pass inverse-raster scatter, prefix append, BHSD->BSHD transform, and
 // FP16-video conversion to the original H3 input/output dtype.

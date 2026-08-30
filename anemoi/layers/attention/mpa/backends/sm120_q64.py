@@ -150,6 +150,7 @@ def prepare_h3_sm120_operands(
     has_mxfp8: bool,
     has_fp16: bool,
     has_prefix_query_int8: bool,
+    has_maxpool: bool,
     global_scales: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None,
 ) -> tuple[torch.Tensor, ...]:
     scales = global_scales or (None, None, None)
@@ -167,6 +168,7 @@ def prepare_h3_sm120_operands(
         has_mxfp8,
         has_fp16,
         has_prefix_query_int8,
+        has_maxpool,
         *scales,
     )
 
@@ -174,8 +176,14 @@ def prepare_h3_sm120_operands(
 def sm120_h3_draft_probability(
     q_pool: torch.Tensor,
     k_pool: torch.Tensor,
+    q_max_pool: torch.Tensor | None = None,
+    k_max_pool: torch.Tensor | None = None,
+    maxpool_weight: float = 0.0,
 ) -> torch.Tensor:
-    return _load_h3_draft()(q_pool, k_pool)
+    operation = _load_h3_draft()
+    if maxpool_weight == 0.0:
+        return operation(q_pool, k_pool)
+    return operation(q_pool, k_pool, q_max_pool, k_max_pool, maxpool_weight)
 
 
 def sm120_h3_k_tail_r1_probability(

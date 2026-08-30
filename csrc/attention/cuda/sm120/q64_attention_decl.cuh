@@ -159,6 +159,7 @@ void name( \
     float softmax_scale, cudaStream_t stream)
 
 MPA_DECLARE_INT8_LAUNCH(launch_mixed_attention_sm120_q64_int8);
+MPA_DECLARE_INT8_LAUNCH(launch_mixed_attention_sm120_q64_int8_fp16);
 MPA_DECLARE_INT8_LAUNCH(launch_mixed_attention_sm120_q128_int8);
 MPA_DECLARE_INT8_LAUNCH(launch_mixed_attention_sm120_q64_int8_dense);
 MPA_DECLARE_INT8_LAUNCH(launch_mixed_attention_sm120_q128_int8_dense);

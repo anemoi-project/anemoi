@@ -16,10 +16,10 @@ Each benchmark should report:
 - prompt, seed, and initial-latent fingerprint
 - output artifact path
 
-## Draft Attention Smoke Commands
+## MiniMax-H3 benchmark entry point
 
 The current end-to-end benchmark entry point is `scripts/run_minimax_h3.sh`.
-
-The capture-based operator validation for SM89 INT8 prefix Q/K/V and native
-fixed-budget Anchor routing is recorded in
-[`docs/sm89_int8_prefix_anchor.md`](../docs/sm89_int8_prefix_anchor.md).
+See the stable [attention API](../docs/attention_api.md) for the supported
+native MPA contract and the
+[MiniMax-H3 reproduction guide](../anemoi/models/minimax_h3/REPRODUCTION.md) for
+the controlled benchmark procedure and output contract.

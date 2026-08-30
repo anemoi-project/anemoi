@@ -1,0 +1,1150 @@
+{
+  "accepted_native_cells": {
+    "q128": 11,
+    "q64": 10,
+    "q64_nvfp4_mxfp8_without_fp16": "compile/correctness diagnostic only, not accepted",
+    "total": 21
+  },
+  "captures": {
+    "10s": {
+      "path": "/home/zju/work/mixed_precision_attention/results/captures/minimax_h3_sm120_real_duration_20260819/10s/captures/step24_layer25.pt",
+      "prefix_tokens": 1347,
+      "sha256": "816d8949b2a906b308e2a49f1f89bdacc2f85e25d5dcb83965d5ab50b59b7e8f",
+      "video_shape": [
+        72,
+        24,
+        42
+      ]
+    },
+    "5s": {
+      "path": "/home/zju/work/mixed_precision_attention/results/captures/minimax_h3_sm120_real_duration_20260819/5s/captures/step24_layer25.pt",
+      "prefix_tokens": 951,
+      "sha256": "5b43f0940f2d36a6eb5c6c699dca25499f5f10c0399ae559f06b2a4ecadfed51",
+      "video_shape": [
+        37,
+        24,
+        42
+      ]
+    }
+  },
+  "date": "2026-08-30",
+  "full_candidate_matrix_5s": {
+    "anchor_count": 0,
+    "anchors_enabled": false,
+    "capture": "/home/zju/work/mixed_precision_attention/results/captures/minimax_h3_sm120_real_duration_20260819/5s/captures/step24_layer25.pt",
+    "capture_sha256": "5b43f0940f2d36a6eb5c6c699dca25499f5f10c0399ae559f06b2a4ecadfed51",
+    "cases": {
+      "q128_fp16": {
+        "error_vs_dense": {
+          "max_abs": 44.75,
+          "relative_l2": 0.11372648924589157,
+          "rmse": 0.8554282784461975
+        },
+        "latency": {
+          "mean_ms": 11.410912089877659,
+          "median_ms": 11.410016059875488,
+          "samples_ms": [
+            11.514304161071777,
+            11.433119773864746,
+            11.400192260742188,
+            11.403488159179688,
+            11.41971206665039,
+            11.329024314880371,
+            11.37622356414795,
+            11.410016059875488,
+            11.412128448486328
+          ]
+        },
+        "prefix_phase": "fp16",
+        "ratios": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.8000022826880935,
+          "retained_blocks_per_query": 17523,
+          "total_blocks_per_query": 87616
+        },
+        "runtime_phases": [
+          "fp16"
+        ]
+      },
+      "q128_int8": {
+        "error_vs_dense": {
+          "max_abs": 44.875,
+          "relative_l2": 0.11435923725366592,
+          "rmse": 0.8601877093315125
+        },
+        "latency": {
+          "mean_ms": 5.827228440178765,
+          "median_ms": 5.829887866973877,
+          "samples_ms": [
+            5.815936088562012,
+            5.825664043426514,
+            5.791999816894531,
+            5.829887866973877,
+            5.830111980438232,
+            5.841599941253662,
+            5.816319942474365,
+            5.8368000984191895,
+            5.856736183166504
+          ]
+        },
+        "prefix_phase": "int8",
+        "ratios": [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.8000022826880935,
+          "retained_blocks_per_query": 17523,
+          "total_blocks_per_query": 87616
+        },
+        "runtime_phases": [
+          "int8"
+        ]
+      },
+      "q128_int8_fp16": {
+        "error_vs_dense": {
+          "max_abs": 44.625,
+          "relative_l2": 0.1140865609049797,
+          "rmse": 0.8581367135047913
+        },
+        "latency": {
+          "mean_ms": 6.791651566823323,
+          "median_ms": 6.788896083831787,
+          "samples_ms": [
+            6.731616020202637,
+            6.787519931793213,
+            6.839200019836426,
+            6.788896083831787,
+            6.752543926239014,
+            6.765120029449463,
+            6.845888137817383,
+            6.814176082611084,
+            6.799903869628906
+          ]
+        },
+        "prefix_phase": "int8",
+        "ratios": [
+          0.0,
+          0.85,
+          0.0,
+          0.15
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.8000022826880935,
+          "retained_blocks_per_query": 17523,
+          "total_blocks_per_query": 87616
+        },
+        "runtime_phases": [
+          "int8",
+          "fp16"
+        ]
+      },
+      "q128_mxfp8": {
+        "error_vs_dense": {
+          "max_abs": 45.0,
+          "relative_l2": 0.11658585071563721,
+          "rmse": 0.8769358396530151
+        },
+        "latency": {
+          "mean_ms": 6.847740491231282,
+          "median_ms": 6.852735996246338,
+          "samples_ms": [
+            6.904543876647949,
+            6.881279945373535,
+            6.769023895263672,
+            6.842048168182373,
+            6.789984226226807,
+            6.852735996246338,
+            6.8667521476745605,
+            6.8461761474609375,
+            6.877120018005371
+          ]
+        },
+        "prefix_phase": "mxfp8",
+        "ratios": [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.8000022826880935,
+          "retained_blocks_per_query": 17523,
+          "total_blocks_per_query": 87616
+        },
+        "runtime_phases": [
+          "mxfp8"
+        ]
+      },
+      "q128_mxfp8_fp16": {
+        "error_vs_dense": {
+          "max_abs": 44.75,
+          "relative_l2": 0.11590392142534256,
+          "rmse": 0.8718065619468689
+        },
+        "latency": {
+          "mean_ms": 7.506755616929796,
+          "median_ms": 7.518400192260742,
+          "samples_ms": [
+            7.449056148529053,
+            7.498976230621338,
+            7.413536071777344,
+            7.518400192260742,
+            7.512991905212402,
+            7.533152103424072,
+            7.549952030181885,
+            7.5581440925598145,
+            7.526591777801514
+          ]
+        },
+        "prefix_phase": "mxfp8",
+        "ratios": [
+          0.0,
+          0.0,
+          0.85,
+          0.15
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.8000022826880935,
+          "retained_blocks_per_query": 17523,
+          "total_blocks_per_query": 87616
+        },
+        "runtime_phases": [
+          "mxfp8",
+          "fp16"
+        ]
+      },
+      "q128_nvfp4": {
+        "error_vs_dense": {
+          "max_abs": 45.125,
+          "relative_l2": 0.21925432980060577,
+          "rmse": 1.6491879224777222
+        },
+        "latency": {
+          "mean_ms": 5.125653266906738,
+          "median_ms": 5.119487762451172,
+          "samples_ms": [
+            5.233856201171875,
+            5.1528639793396,
+            5.133567810058594,
+            5.062367916107178,
+            5.123807907104492,
+            5.119487762451172,
+            5.1123199462890625,
+            5.080319881439209,
+            5.112287998199463
+          ]
+        },
+        "prefix_phase": "nvfp4",
+        "ratios": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.8000022826880935,
+          "retained_blocks_per_query": 17523,
+          "total_blocks_per_query": 87616
+        },
+        "runtime_phases": [
+          "nvfp4"
+        ]
+      },
+      "q128_nvfp4_fp16": {
+        "error_vs_dense": {
+          "max_abs": 44.0,
+          "relative_l2": 0.15664684772491455,
+          "rmse": 1.1782667636871338
+        },
+        "latency": {
+          "mean_ms": 5.954232851664226,
+          "median_ms": 5.947391986846924,
+          "samples_ms": [
+            5.920959949493408,
+            5.984447956085205,
+            5.989215850830078,
+            5.913951873779297,
+            5.93782377243042,
+            5.941664218902588,
+            5.947391986846924,
+            5.978847980499268,
+            5.97379207611084
+          ]
+        },
+        "prefix_phase": "nvfp4",
+        "ratios": [
+          0.85,
+          0.0,
+          0.0,
+          0.15
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.8000022826880935,
+          "retained_blocks_per_query": 17523,
+          "total_blocks_per_query": 87616
+        },
+        "runtime_phases": [
+          "nvfp4",
+          "fp16"
+        ]
+      },
+      "q128_nvfp4_int8": {
+        "error_vs_dense": {
+          "max_abs": 44.875,
+          "relative_l2": 0.1317133605480194,
+          "rmse": 0.9907220005989075
+        },
+        "latency": {
+          "mean_ms": 5.472042613559299,
+          "median_ms": 5.324831962585449,
+          "samples_ms": [
+            5.338687896728516,
+            5.319808006286621,
+            5.299615859985352,
+            5.3051838874816895,
+            5.324831962585449,
+            5.302976131439209,
+            5.697535991668701,
+            6.2599358558654785,
+            5.399807929992676
+          ]
+        },
+        "prefix_phase": "nvfp4",
+        "ratios": [
+          0.6,
+          0.4,
+          0.0,
+          0.0
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.8000022826880935,
+          "retained_blocks_per_query": 17523,
+          "total_blocks_per_query": 87616
+        },
+        "runtime_phases": [
+          "nvfp4",
+          "int8"
+        ]
+      },
+      "q128_nvfp4_int8_fp16": {
+        "error_vs_dense": {
+          "max_abs": 44.625,
+          "relative_l2": 0.13137443363666534,
+          "rmse": 0.9881726503372192
+        },
+        "latency": {
+          "mean_ms": 6.093219598134358,
+          "median_ms": 6.101664066314697,
+          "samples_ms": [
+            6.101664066314697,
+            6.074848175048828,
+            6.104544162750244,
+            6.078591823577881,
+            6.078688144683838,
+            6.07206392288208,
+            6.106080055236816,
+            6.115295886993408,
+            6.1072001457214355
+          ]
+        },
+        "prefix_phase": "nvfp4",
+        "ratios": [
+          0.6,
+          0.25,
+          0.0,
+          0.15
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.8000022826880935,
+          "retained_blocks_per_query": 17523,
+          "total_blocks_per_query": 87616
+        },
+        "runtime_phases": [
+          "nvfp4",
+          "int8",
+          "fp16"
+        ]
+      },
+      "q128_nvfp4_mxfp8": {
+        "error_vs_dense": {
+          "max_abs": 45.0,
+          "relative_l2": 0.13356022536754608,
+          "rmse": 1.0046138763427734
+        },
+        "latency": {
+          "mean_ms": 6.116924391852485,
+          "median_ms": 6.120543956756592,
+          "samples_ms": [
+            6.082176208496094,
+            6.075295925140381,
+            6.078303813934326,
+            6.120543956756592,
+            6.118239879608154,
+            6.146463871002197,
+            6.137311935424805,
+            6.1426239013671875,
+            6.151360034942627
+          ]
+        },
+        "prefix_phase": "nvfp4",
+        "ratios": [
+          0.6,
+          0.0,
+          0.4,
+          0.0
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.8000022826880935,
+          "retained_blocks_per_query": 17523,
+          "total_blocks_per_query": 87616
+        },
+        "runtime_phases": [
+          "nvfp4",
+          "mxfp8"
+        ]
+      },
+      "q128_nvfp4_mxfp8_fp16": {
+        "error_vs_dense": {
+          "max_abs": 44.75,
+          "relative_l2": 0.13223734498023987,
+          "rmse": 0.9946633577346802
+        },
+        "latency": {
+          "mean_ms": 7.1571413146124945,
+          "median_ms": 7.151391983032227,
+          "samples_ms": [
+            7.208831787109375,
+            7.170015811920166,
+            7.141632080078125,
+            7.158336162567139,
+            7.151391983032227,
+            7.170176029205322,
+            7.144032001495361,
+            7.138879776000977,
+            7.13097620010376
+          ]
+        },
+        "prefix_phase": "nvfp4",
+        "ratios": [
+          0.6,
+          0.0,
+          0.25,
+          0.15
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.8000022826880935,
+          "retained_blocks_per_query": 17523,
+          "total_blocks_per_query": 87616
+        },
+        "runtime_phases": [
+          "nvfp4",
+          "mxfp8",
+          "fp16"
+        ]
+      },
+      "q64_fp16": {
+        "error_vs_dense": {
+          "max_abs": 48.0,
+          "relative_l2": 0.09916158765554428,
+          "rmse": 0.7458739876747131
+        },
+        "latency": {
+          "mean_ms": 11.366684489780003,
+          "median_ms": 11.372384071350098,
+          "samples_ms": [
+            11.328800201416016,
+            11.371199607849121,
+            11.456512451171875,
+            11.242431640625,
+            11.372384071350098,
+            11.414655685424805,
+            11.39187240600586,
+            11.256352424621582,
+            11.465951919555664
+          ]
+        },
+        "prefix_phase": "fp16",
+        "ratios": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.7999994293279766,
+          "retained_blocks_per_query": 70093,
+          "total_blocks_per_query": 350464
+        },
+        "runtime_phases": [
+          "fp16"
+        ]
+      },
+      "q64_int8": {
+        "error_vs_dense": {
+          "max_abs": 48.0,
+          "relative_l2": 0.09993545711040497,
+          "rmse": 0.7516948580741882
+        },
+        "latency": {
+          "mean_ms": 6.170883496602376,
+          "median_ms": 6.189760208129883,
+          "samples_ms": [
+            5.632351875305176,
+            6.448607921600342,
+            6.170783996582031,
+            6.108255863189697,
+            6.343455791473389,
+            6.279168128967285,
+            6.1465277671813965,
+            6.189760208129883,
+            6.2190399169921875
+          ]
+        },
+        "prefix_phase": "int8",
+        "ratios": [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.7999994293279766,
+          "retained_blocks_per_query": 70093,
+          "total_blocks_per_query": 350464
+        },
+        "runtime_phases": [
+          "int8"
+        ]
+      },
+      "q64_int8_fp16": {
+        "error_vs_dense": {
+          "max_abs": 48.0,
+          "relative_l2": 0.09951963275671005,
+          "rmse": 0.7485671043395996
+        },
+        "latency": {
+          "mean_ms": 7.056846247778998,
+          "median_ms": 6.947423934936523,
+          "samples_ms": [
+            7.410560131072998,
+            7.111999988555908,
+            7.212512016296387,
+            6.923423767089844,
+            7.092800140380859,
+            6.947423934936523,
+            6.939680099487305,
+            6.927072048187256,
+            6.946144104003906
+          ]
+        },
+        "prefix_phase": "int8",
+        "ratios": [
+          0.0,
+          0.85,
+          0.0,
+          0.15
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.7999994293279766,
+          "retained_blocks_per_query": 70093,
+          "total_blocks_per_query": 350464
+        },
+        "runtime_phases": [
+          "int8",
+          "fp16"
+        ]
+      },
+      "q64_mxfp8": {
+        "error_vs_dense": {
+          "max_abs": 48.75,
+          "relative_l2": 0.10257867723703384,
+          "rmse": 0.7715767025947571
+        },
+        "latency": {
+          "mean_ms": 7.288156403435601,
+          "median_ms": 7.253087997436523,
+          "samples_ms": [
+            7.24294376373291,
+            7.210303783416748,
+            7.247136116027832,
+            7.253087997436523,
+            7.386879920959473,
+            7.242368221282959,
+            7.284287929534912,
+            7.352735996246338,
+            7.373663902282715
+          ]
+        },
+        "prefix_phase": "mxfp8",
+        "ratios": [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.7999994293279766,
+          "retained_blocks_per_query": 70093,
+          "total_blocks_per_query": 350464
+        },
+        "runtime_phases": [
+          "mxfp8"
+        ]
+      },
+      "q64_mxfp8_fp16": {
+        "error_vs_dense": {
+          "max_abs": 48.0,
+          "relative_l2": 0.1012822836637497,
+          "rmse": 0.761825442314148
+        },
+        "latency": {
+          "mean_ms": 7.7511857350667315,
+          "median_ms": 7.736256122589111,
+          "samples_ms": [
+            7.710239887237549,
+            7.715775966644287,
+            7.75600004196167,
+            7.718207836151123,
+            7.769375801086426,
+            7.795904159545898,
+            7.733983993530273,
+            7.736256122589111,
+            7.824927806854248
+          ]
+        },
+        "prefix_phase": "mxfp8",
+        "ratios": [
+          0.0,
+          0.0,
+          0.85,
+          0.15
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.7999994293279766,
+          "retained_blocks_per_query": 70093,
+          "total_blocks_per_query": 350464
+        },
+        "runtime_phases": [
+          "mxfp8",
+          "fp16"
+        ]
+      },
+      "q64_nvfp4": {
+        "error_vs_dense": {
+          "max_abs": 47.328125,
+          "relative_l2": 0.21686115860939026,
+          "rmse": 1.631187081336975
+        },
+        "latency": {
+          "mean_ms": 5.599797354804145,
+          "median_ms": 5.6023359298706055,
+          "samples_ms": [
+            5.680287837982178,
+            5.233983993530273,
+            5.959296226501465,
+            5.475488185882568,
+            5.5088958740234375,
+            5.730207920074463,
+            5.70249605178833,
+            5.505184173583984,
+            5.6023359298706055
+          ]
+        },
+        "prefix_phase": "nvfp4",
+        "ratios": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.7999994293279766,
+          "retained_blocks_per_query": 70093,
+          "total_blocks_per_query": 350464
+        },
+        "runtime_phases": [
+          "nvfp4"
+        ]
+      },
+      "q64_nvfp4_fp16": {
+        "error_vs_dense": {
+          "max_abs": 48.0,
+          "relative_l2": 0.14182928204536438,
+          "rmse": 1.0668120384216309
+        },
+        "latency": {
+          "mean_ms": 6.556056976318359,
+          "median_ms": 6.460512161254883,
+          "samples_ms": [
+            6.331136226654053,
+            6.32860803604126,
+            6.481184005737305,
+            6.459712028503418,
+            6.478335857391357,
+            6.353184223175049,
+            6.460512161254883,
+            6.467840194702148,
+            7.644000053405762
+          ]
+        },
+        "prefix_phase": "nvfp4",
+        "ratios": [
+          0.85,
+          0.0,
+          0.0,
+          0.15
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.7999994293279766,
+          "retained_blocks_per_query": 70093,
+          "total_blocks_per_query": 350464
+        },
+        "runtime_phases": [
+          "nvfp4",
+          "fp16"
+        ]
+      },
+      "q64_nvfp4_int8": {
+        "error_vs_dense": {
+          "max_abs": 48.0,
+          "relative_l2": 0.11771390587091446,
+          "rmse": 0.8854208588600159
+        },
+        "latency": {
+          "mean_ms": 6.010684437221951,
+          "median_ms": 6.057568073272705,
+          "samples_ms": [
+            6.06063985824585,
+            6.071775913238525,
+            5.962592124938965,
+            5.95743989944458,
+            5.748479843139648,
+            6.111264228820801,
+            6.120639801025391,
+            6.005760192871094,
+            6.057568073272705
+          ]
+        },
+        "prefix_phase": "nvfp4",
+        "ratios": [
+          0.6,
+          0.4,
+          0.0,
+          0.0
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.7999994293279766,
+          "retained_blocks_per_query": 70093,
+          "total_blocks_per_query": 350464
+        },
+        "runtime_phases": [
+          "nvfp4",
+          "int8"
+        ]
+      },
+      "q64_nvfp4_int8_fp16": {
+        "error_vs_dense": {
+          "max_abs": 48.0,
+          "relative_l2": 0.11725141108036041,
+          "rmse": 0.881942093372345
+        },
+        "latency": {
+          "mean_ms": 6.451889779832628,
+          "median_ms": 6.453440189361572,
+          "samples_ms": [
+            6.469344139099121,
+            6.458943843841553,
+            6.45465612411499,
+            6.437119960784912,
+            6.453440189361572,
+            6.447231769561768,
+            6.429599761962891,
+            6.468832015991211,
+            6.447840213775635
+          ]
+        },
+        "prefix_phase": "nvfp4",
+        "ratios": [
+          0.6,
+          0.25,
+          0.0,
+          0.15
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.7999994293279766,
+          "retained_blocks_per_query": 70093,
+          "total_blocks_per_query": 350464
+        },
+        "runtime_phases": [
+          "nvfp4",
+          "int8",
+          "fp16"
+        ]
+      },
+      "q64_nvfp4_mxfp8_fp16": {
+        "error_vs_dense": {
+          "max_abs": 48.0,
+          "relative_l2": 0.1179770901799202,
+          "rmse": 0.8874005079269409
+        },
+        "latency": {
+          "mean_ms": 7.295111073387994,
+          "median_ms": 7.288928031921387,
+          "samples_ms": [
+            7.288928031921387,
+            7.332736015319824,
+            7.267615795135498,
+            7.264383792877197,
+            7.27455997467041,
+            7.287744045257568,
+            7.305759906768799,
+            7.311071872711182,
+            7.323200225830078
+          ]
+        },
+        "prefix_phase": "nvfp4",
+        "ratios": [
+          0.6,
+          0.0,
+          0.25,
+          0.15
+        ],
+        "route": {
+          "measured_effective_sparsity": 0.7999994293279766,
+          "retained_blocks_per_query": 70093,
+          "total_blocks_per_query": 350464
+        },
+        "runtime_phases": [
+          "nvfp4",
+          "mxfp8",
+          "fp16"
+        ]
+      }
+    },
+    "dense": {
+      "mean_ms": 50.04800033569336,
+      "median_ms": 50.04217529296875,
+      "samples_ms": [
+        50.03142547607422,
+        50.03763198852539,
+        50.07737731933594,
+        50.04025650024414,
+        50.04694366455078,
+        50.04217529296875,
+        50.0601921081543
+      ]
+    },
+    "dtype": "torch.bfloat16",
+    "maxpool_weight": 0.0,
+    "prefix_tokens": 951,
+    "requested_sparsity": 0.8,
+    "shape": [
+      1,
+      38247,
+      14,
+      128
+    ],
+    "video_shape": [
+      37,
+      24,
+      42
+    ]
+  },
+  "hardware": "NVIDIA GeForce RTX 5090 (SM120)",
+  "plain_int8_fp16_ab_10s": {
+    "baseline": {
+      "dense": {
+        "median_ms": 188.6824493408203,
+        "round_medians_ms": [
+          187.86300659179688,
+          188.80995178222656,
+          188.86822509765625,
+          188.6901092529297
+        ]
+      },
+      "sparse": {
+        "q128_int8": {
+          "median_ms": 18.86836814880371,
+          "round_medians_ms": [
+            18.73731231689453,
+            19.014144897460938,
+            18.853984832763672,
+            19.05561637878418
+          ],
+          "route": {
+            "measured_effective_sparsity": 0.800000602816358,
+            "retained_blocks_per_query": 66355,
+            "total_blocks_per_query": 331776
+          }
+        },
+        "q128_int8_fp16": {
+          "median_ms": 21.41980743408203,
+          "round_medians_ms": [
+            21.346656799316406,
+            21.4215030670166,
+            21.41811180114746,
+            21.495328903198242
+          ],
+          "route": {
+            "measured_effective_sparsity": 0.800000602816358,
+            "retained_blocks_per_query": 66355,
+            "total_blocks_per_query": 331776
+          }
+        },
+        "q128_nvfp4_int8_fp16": {
+          "median_ms": 19.654447555541992,
+          "round_medians_ms": [
+            19.546688079833984,
+            19.66556739807129,
+            19.663360595703125,
+            19.699647903442383
+          ],
+          "route": {
+            "measured_effective_sparsity": 0.800000602816358,
+            "retained_blocks_per_query": 66355,
+            "total_blocks_per_query": 331776
+          }
+        },
+        "q64_int8": {
+          "median_ms": 20.917136192321777,
+          "round_medians_ms": [
+            20.643775939941406,
+            20.74787139892578,
+            21.076351165771484,
+            20.9768009185791
+          ],
+          "route": {
+            "measured_effective_sparsity": 0.7999998492959105,
+            "retained_blocks_per_query": 265421,
+            "total_blocks_per_query": 1327104
+          }
+        },
+        "q64_int8_fp16": {
+          "median_ms": 23.661359786987305,
+          "round_medians_ms": [
+            23.45305633544922,
+            23.725120544433594,
+            23.630367279052734,
+            23.689695358276367
+          ],
+          "route": {
+            "measured_effective_sparsity": 0.7999998492959105,
+            "retained_blocks_per_query": 265421,
+            "total_blocks_per_query": 1327104
+          }
+        },
+        "q64_nvfp4_int8_fp16": {
+          "median_ms": 20.92865562438965,
+          "round_medians_ms": [
+            20.82659149169922,
+            20.952640533447266,
+            20.87504005432129,
+            21.02694320678711
+          ],
+          "route": {
+            "measured_effective_sparsity": 0.7999998492959105,
+            "retained_blocks_per_query": 265421,
+            "total_blocks_per_query": 1327104
+          }
+        }
+      }
+    },
+    "candidate": {
+      "dense": {
+        "median_ms": 188.41920471191406,
+        "round_medians_ms": [
+          187.70941162109375,
+          188.0528564453125,
+          188.92742919921875,
+          188.70693969726562
+        ]
+      },
+      "sparse": {
+        "q128_int8": {
+          "median_ms": 19.00814437866211,
+          "round_medians_ms": [
+            18.9520320892334,
+            19.00864028930664,
+            19.03606414794922,
+            19.05673599243164
+          ],
+          "route": {
+            "measured_effective_sparsity": 0.800000602816358,
+            "retained_blocks_per_query": 66355,
+            "total_blocks_per_query": 331776
+          }
+        },
+        "q128_int8_fp16": {
+          "median_ms": 21.688288688659668,
+          "round_medians_ms": [
+            21.644287109375,
+            21.668895721435547,
+            21.712543487548828,
+            21.728063583374023
+          ],
+          "route": {
+            "measured_effective_sparsity": 0.800000602816358,
+            "retained_blocks_per_query": 66355,
+            "total_blocks_per_query": 331776
+          }
+        },
+        "q128_nvfp4_int8_fp16": {
+          "median_ms": 19.597135543823242,
+          "round_medians_ms": [
+            19.588512420654297,
+            19.618688583374023,
+            19.73651123046875,
+            19.573856353759766
+          ],
+          "route": {
+            "measured_effective_sparsity": 0.800000602816358,
+            "retained_blocks_per_query": 66355,
+            "total_blocks_per_query": 331776
+          }
+        },
+        "q64_int8": {
+          "median_ms": 20.84683132171631,
+          "round_medians_ms": [
+            20.807039260864258,
+            20.818208694458008,
+            20.84726333618164,
+            20.90153694152832
+          ],
+          "route": {
+            "measured_effective_sparsity": 0.7999998492959105,
+            "retained_blocks_per_query": 265421,
+            "total_blocks_per_query": 1327104
+          }
+        },
+        "q64_int8_fp16": {
+          "median_ms": 23.751392364501953,
+          "round_medians_ms": [
+            23.60153579711914,
+            23.526464462280273,
+            23.874879837036133,
+            23.834400177001953
+          ],
+          "route": {
+            "measured_effective_sparsity": 0.7999998492959105,
+            "retained_blocks_per_query": 265421,
+            "total_blocks_per_query": 1327104
+          }
+        },
+        "q64_nvfp4_int8_fp16": {
+          "median_ms": 20.94863986968994,
+          "round_medians_ms": [
+            20.893728256225586,
+            20.924928665161133,
+            20.976543426513672,
+            20.988576889038086
+          ],
+          "route": {
+            "measured_effective_sparsity": 0.7999998492959105,
+            "retained_blocks_per_query": 265421,
+            "total_blocks_per_query": 1327104
+          }
+        }
+      }
+    },
+    "comparisons": {
+      "q128_int8": {
+        "baseline_ms": 18.86836814880371,
+        "candidate_ms": 19.00814437866211,
+        "delta_percent": 0.7407966007238365,
+        "route": {
+          "measured_effective_sparsity": 0.800000602816358,
+          "retained_blocks_per_query": 66355,
+          "total_blocks_per_query": 331776
+        }
+      },
+      "q128_int8_fp16": {
+        "baseline_ms": 21.41980743408203,
+        "candidate_ms": 21.688288688659668,
+        "delta_percent": 1.2534251552161146,
+        "delta_vs_identical_pure_int8_control_percent": 0.5126285544922782,
+        "route": {
+          "measured_effective_sparsity": 0.800000602816358,
+          "retained_blocks_per_query": 66355,
+          "total_blocks_per_query": 331776
+        }
+      },
+      "q128_nvfp4_int8_fp16": {
+        "baseline_ms": 19.654447555541992,
+        "candidate_ms": 19.597135543823242,
+        "delta_percent": -0.29159818182011854,
+        "route": {
+          "measured_effective_sparsity": 0.800000602816358,
+          "retained_blocks_per_query": 66355,
+          "total_blocks_per_query": 331776
+        }
+      },
+      "q64_int8": {
+        "baseline_ms": 20.917136192321777,
+        "candidate_ms": 20.84683132171631,
+        "delta_percent": -0.3361113584529618,
+        "route": {
+          "measured_effective_sparsity": 0.7999998492959105,
+          "retained_blocks_per_query": 265421,
+          "total_blocks_per_query": 1327104
+        }
+      },
+      "q64_int8_fp16": {
+        "baseline_ms": 23.661359786987305,
+        "candidate_ms": 23.751392364501953,
+        "delta_percent": 0.38050466382817394,
+        "delta_vs_identical_pure_int8_control_percent": 0.7166160222811357,
+        "route": {
+          "measured_effective_sparsity": 0.7999998492959105,
+          "retained_blocks_per_query": 265421,
+          "total_blocks_per_query": 1327104
+        }
+      },
+      "q64_nvfp4_int8_fp16": {
+        "baseline_ms": 20.92865562438965,
+        "candidate_ms": 20.94863986968994,
+        "delta_percent": 0.09548747735619312,
+        "route": {
+          "measured_effective_sparsity": 0.7999998492959105,
+          "retained_blocks_per_query": 265421,
+          "total_blocks_per_query": 1327104
+        }
+      }
+    }
+  },
+  "protocol": {
+    "ab_10s": "four paired rounds in balanced baseline/candidate order; 9 sparse and 5 Dense samples per process",
+    "accuracy_baseline": "live Dense SDPA from the same captured Q/K/V; no sparse comparator is used as an accuracy baseline",
+    "anchor_count": 0,
+    "anchors_enabled": false,
+    "full_matrix": "candidate; 2 warmups + 9 samples per sparse cell; 2 warmups + 7 Dense samples",
+    "maxpool_weight": 0.0,
+    "route_matching": "baseline and candidate use identical retained/total block counts in every A/B cell",
+    "timing": "CUDA events"
+  },
+  "regression_checks": {
+    "ab_candidate_output": "bitwise_equal in all four candidate processes",
+    "accuracy_note": "same-method regression checks are not accuracy baselines; full matrix error metrics are against Dense only",
+    "q64_q128_output_and_lse": "bitwise_equal_against_frozen_same-method baseline on real 5s Dense capture"
+  },
+  "schema": "anemoi.diagnostic.sm120_phase_closure_benchmark.v2",
+  "source": {
+    "baseline_commit": "5542126",
+    "baseline_extension_sha256": "817fe2523fce0fcefd3cee07fc40454b155053e43fb68cacee4a041c4af42683",
+    "candidate_commit": "4b314683569ddd5987923224faf45541c6e6c2df",
+    "candidate_extension_sha256": "08ae61320b5788b807efab5e4a13afac61d04aa54f777f85f782662c9b3755bc"
+  },
+  "status": "validated",
+  "toolchain": {
+    "cuda": "13.1",
+    "python": "3.12",
+    "pytorch": "2.11.0+cu130"
+  }
+}

@@ -149,6 +149,29 @@ class AttentionAPICudaTests(unittest.TestCase):
                         self._assert_output_contract(output, query)
 
     @torch.inference_mode()
+    def test_public_q64_q128_maxpool_matrix(self) -> None:
+        query, key, value = self.prefixed_qkv
+        layout = anemoi.VisualLayout(_VIDEO_SHAPE, prefix_tokens=_PREFIX_TOKENS)
+        for query_block_size in (64, 128):
+            for weight in (0.0, 0.5, 1.0):
+                with self.subTest(
+                    query_block_size=query_block_size,
+                    maxpool_weight=weight,
+                ):
+                    output = anemoi.anemoi_attention(
+                        query,
+                        key,
+                        value,
+                        layout=layout,
+                        layer=self.layer,
+                        sparse_config=anemoi.SparseConfig(
+                            query_block_size=query_block_size,
+                            maxpool_weight=weight,
+                        ),
+                    )
+                    self._assert_output_contract(output, query)
+
+    @torch.inference_mode()
     def test_generic_and_h3_nvfp4_calibration_paths(self) -> None:
         query, key, value = self.prefixed_qkv
         layout = anemoi.VisualLayout(_VIDEO_SHAPE, prefix_tokens=_PREFIX_TOKENS)

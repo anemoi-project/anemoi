@@ -7,53 +7,6 @@ from dataclasses import dataclass
 
 import torch
 
-_MEAN20_LAYER_SPARSITY_BANDS = (
-    (2, 4, 0.88),
-    (4, 5, 0.78),
-    (5, 6, 0.80),
-    (6, 7, 0.84),
-    (7, 8, 0.86),
-    (8, 9, 0.84),
-    (9, 10, 0.78),
-    (10, 11, 0.76),
-    (11, 12, 0.82),
-    (12, 13, 0.80),
-    (13, 15, 0.82),
-    (15, 16, 0.78),
-    (16, 17, 0.80),
-    (17, 18, 0.84),
-    (18, 19, 0.82),
-    (19, 20, 0.84),
-    (20, 21, 0.80),
-    (21, 22, 0.84),
-    (22, 23, 0.80),
-    (23, 24, 0.74),
-    (24, 25, 0.76),
-    (25, 26, 0.78),
-    (26, 27, 0.82),
-    (27, 29, 0.80),
-    (29, 30, 0.84),
-    (30, 31, 0.80),
-    (31, 32, 0.76),
-    (32, 34, 0.78),
-    (34, 35, 0.74),
-    (35, 36, 0.76),
-    (36, 37, 0.80),
-    (37, 38, 0.76),
-    (38, 39, 0.74),
-    (39, 40, 0.72),
-    (40, 41, 0.74),
-    (41, 42, 0.70),
-    (42, 44, 0.76),
-    (44, 45, 0.80),
-    (45, 46, 0.84),
-    (46, 47, 0.88),
-    (47, 48, 0.80),
-    (48, 49, 0.86),
-    (49, 50, 0.88),
-)
-
-
 @dataclass(frozen=True)
 class VisualLayout:
     """Structured visual tokens following an optional packed prefix."""
@@ -86,7 +39,8 @@ class SparseConfig:
 
     query_block_size: int = 64
     sparsity_ratio: float = 0.80
-    layer_sparsity_bands: tuple[tuple[int, int, float], ...] = _MEAN20_LAYER_SPARSITY_BANDS
+    layer_sparsity_bands: tuple[tuple[int, int, float], ...] = ()
+    maxpool_weight: float = 0.0
 
     def __post_init__(self) -> None:
         if type(self.query_block_size) is not int or self.query_block_size not in (64, 128):
@@ -98,6 +52,14 @@ class SparseConfig:
             or not 0.0 <= float(self.sparsity_ratio) < 1.0
         ):
             raise ValueError("sparsity_ratio must be finite and in [0, 1)")
+        if isinstance(self.maxpool_weight, bool) or not isinstance(
+            self.maxpool_weight, (int, float)
+        ):
+            raise TypeError("maxpool_weight must be a real number")
+        if not math.isfinite(float(self.maxpool_weight)) or not 0.0 <= float(
+            self.maxpool_weight
+        ) <= 1.0:
+            raise ValueError("maxpool_weight must be finite and in [0, 1]")
         previous_end = 0
         for band in self.layer_sparsity_bands:
             if not isinstance(band, tuple) or len(band) != 3:
@@ -226,6 +188,7 @@ def anemoi_attention(
         fp16_ratio=quant.fp16_ratio,
         prefix_kv_precision=quant.prefix_kv_precision,
         prefix_query_precision=quant.prefix_query_precision,
+        maxpool_weight=float(sparse.maxpool_weight),
         nvfp4_scales=resolved_calibration.scales,
     )
 

@@ -18,6 +18,12 @@ template void launch_mixed_attention_sm89_k64<128, true, true, false>(
     const int32_t*, float*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
     uint32_t, uint32_t, float, cudaStream_t);
 
+template void launch_mixed_attention_sm89_k64<128, true, true, true>(
+    int8_t*, int8_t*, __nv_fp8_e4m3*, half*, half*, half*, half*, half*,
+    int32_t*, int32_t*, int32_t*, int32_t*, float*, float*, float*,
+    const int32_t*, float*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
+    uint32_t, uint32_t, float, cudaStream_t);
+
 template void launch_mixed_attention_sm89_k64<128, true, false, false>(
     int8_t*, int8_t*, __nv_fp8_e4m3*, half*, half*, half*, half*, half*,
     int32_t*, int32_t*, int32_t*, int32_t*, float*, float*, float*,

@@ -120,6 +120,45 @@ class SM89Int8PrefixBackendTests(unittest.TestCase):
         self.assertIs(int8_operation.call_args.args[3], route)
         self.assertIs(int8_operation.call_args.args[4], counts)
 
+    def test_pure_fp16_wrapper_skips_int8_preparation_and_mixed_kernel(self) -> None:
+        from anemoi.layers.attention.mpa.backends import sm89_k64
+
+        fp16_operation = Mock(return_value=("output", "lse"))
+        mixed_operation = Mock(side_effect=AssertionError("mixed phase is inactive"))
+        ops = SimpleNamespace(
+            fp16_attention=fp16_operation,
+            mixed_attention=mixed_operation,
+        )
+        query = torch.empty((1, 2, 64, 128), dtype=torch.float16)
+        key = value = torch.empty((1, 2, 128, 128), dtype=torch.float16)
+        route = torch.zeros((1, 2, 1, 2), dtype=torch.int32)
+        counts = torch.ones((1, 2, 1), dtype=torch.int32)
+        valid = torch.full((1, 2), 64, dtype=torch.int32)
+
+        with patch.object(sm89_k64, "_load_k64_ops", return_value=ops), patch.object(
+            sm89_k64,
+            "prepare_k64_fp8_operands",
+            side_effect=AssertionError("pure FP16 must not prepare INT8 operands"),
+        ):
+            result = sm89_k64.native_k64_mixed_attention(
+                query,
+                key,
+                value,
+                route,
+                torch.zeros_like(counts),
+                route,
+                counts,
+                valid,
+                active_int8=False,
+            )
+
+        self.assertEqual(result, ("output", "lse"))
+        mixed_operation.assert_not_called()
+        self.assertEqual(
+            fp16_operation.call_args.args,
+            (query, key, value, route, counts, valid, 1.0 / math.sqrt(128)),
+        )
+
     def test_route_wrapper_forwards_fixed_budget_anchors(self) -> None:
         from anemoi.layers.attention.mpa.backends import sm89_k64
 

@@ -1,4 +1,4 @@
-"""Native SM89 Q64 x K64 executor for stripe-compact ragged routing."""
+"""Native SM89 Q64/Q128 x K64 executor for compact ragged routing."""
 
 from __future__ import annotations
 
@@ -29,12 +29,22 @@ def _warmup_sync(stage: str, device: torch.device) -> None:
 
 @dataclass(frozen=True)
 class _K64Ops:
+    draft_probability: Callable[..., torch.Tensor]
+    fp16_attention: Callable[..., tuple[torch.Tensor, torch.Tensor]]
+    q128_fp16_attention: Callable[..., tuple[torch.Tensor, torch.Tensor]]
     mixed_attention: Callable[..., tuple[torch.Tensor, torch.Tensor]]
+    q128_mixed_attention: Callable[..., tuple[torch.Tensor, torch.Tensor]]
+    smooth_mixed_attention: Callable[..., tuple[torch.Tensor, torch.Tensor]]
+    q128_smooth_mixed_attention: Callable[..., tuple[torch.Tensor, torch.Tensor]]
     int8_attention: Callable[..., tuple[torch.Tensor, torch.Tensor]]
+    q128_int8_attention: Callable[..., tuple[torch.Tensor, torch.Tensor]]
+    smooth_int8_attention: Callable[..., tuple[torch.Tensor, torch.Tensor]]
+    q128_smooth_int8_attention: Callable[..., tuple[torch.Tensor, torch.Tensor]]
     prefix_int8_attention: Callable[..., torch.Tensor]
     preprocess_v_fp8: Callable[..., tuple[torch.Tensor, torch.Tensor]]
     assemble_h3_output: Callable[..., torch.Tensor]
     pack_h3_qkv: Callable[..., tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
+    prepare_h3_int8: Callable[..., tuple[torch.Tensor, ...]]
     route_precision: Callable[..., tuple[torch.Tensor, ...]]
     materialize_route: Callable[..., tuple[torch.Tensor, ...]]
 
@@ -43,14 +53,44 @@ class _K64Ops:
 def _load_k64_ops() -> _K64Ops:
     import_native_extension("attention")
     return _K64Ops(
+        draft_probability=resolve_mixed_attention_operator(
+            "sm89_h3_draft_probability"
+        ),
+        fp16_attention=resolve_mixed_attention_operator(
+            "k64_fp16_attention_forward"
+        ),
+        q128_fp16_attention=resolve_mixed_attention_operator(
+            "q128_k64_fp16_attention_forward"
+        ),
         mixed_attention=resolve_mixed_attention_operator("k64_mixed_attention_forward"),
+        q128_mixed_attention=resolve_mixed_attention_operator(
+            "q128_k64_mixed_attention_forward"
+        ),
+        smooth_mixed_attention=resolve_mixed_attention_operator(
+            "k64_smooth_mixed_attention_forward"
+        ),
+        q128_smooth_mixed_attention=resolve_mixed_attention_operator(
+            "q128_k64_smooth_mixed_attention_forward"
+        ),
         int8_attention=resolve_mixed_attention_operator("k64_fp8_attention_forward"),
+        q128_int8_attention=resolve_mixed_attention_operator(
+            "q128_k64_fp8_attention_forward"
+        ),
+        smooth_int8_attention=resolve_mixed_attention_operator(
+            "k64_smooth_fp8_attention_forward"
+        ),
+        q128_smooth_int8_attention=resolve_mixed_attention_operator(
+            "q128_k64_smooth_fp8_attention_forward"
+        ),
         prefix_int8_attention=resolve_mixed_attention_operator(
             "sm89_q64_prefix_int8_attention_forward"
         ),
         preprocess_v_fp8=resolve_mixed_attention_operator("preprocess_v_fp8"),
         assemble_h3_output=resolve_mixed_attention_operator("assemble_h3_k64_output"),
         pack_h3_qkv=resolve_mixed_attention_operator("pack_h3_k64_qkv_fp16"),
+        prepare_h3_int8=resolve_mixed_attention_operator(
+            "prepare_h3_sm89_int8_operands"
+        ),
         route_precision=resolve_mixed_attention_operator("sm89_h3_route_precision"),
         materialize_route=resolve_mixed_attention_operator("sm89_h3_materialize_route"),
     )
@@ -70,7 +110,7 @@ def prepare_k64_fp8_operands(
     torch.Tensor,
     torch.Tensor,
 ]:
-    """Quantize packed Q64/K64 operands for the mixed SM89 executor.
+    """Quantize packed Q64/Q128 x K64 operands for the SM89 executor.
 
     Q/K retain the inherited symmetric INT8 tensor-core representation; V is
     E4M3.  ``FP8 phase`` is the established public name for this lower-precision
@@ -121,9 +161,11 @@ def native_k64_mixed_attention(
     *,
     fp16_prefix_blocks: int = 0,
     prepared_operands: tuple[torch.Tensor, ...] | None = None,
+    active_int8: bool = True,
     active_fp16: bool = True,
+    query_block: int = _BLOCK,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Launch Q64xK64 mixed attention with one compact absolute-stage list.
+    """Launch Q64/Q128 x K64 attention with one compact absolute-stage list.
 
     ``fp8_block_ids`` and ``fp16_block_ids`` must be the same tensor. Each row
     stores FP8 video stages first and FP16 video stages second; exact prefix
@@ -132,20 +174,70 @@ def native_k64_mixed_attention(
 
     if fp8_block_ids.data_ptr() != fp16_block_ids.data_ptr():
         raise ValueError("native mixed K64 requires one aliased compact FP8/FP16 route list")
+    if query_block not in (_BLOCK, 2 * _BLOCK):
+        raise ValueError("query_block must be 64 or 128")
+    if type(active_int8) is not bool or type(active_fp16) is not bool:
+        raise TypeError("active_int8 and active_fp16 must be bool")
+    if not active_int8 and not active_fp16:
+        raise ValueError("at least one precision phase must be active")
+    if not active_fp16 and fp16_prefix_blocks != 0:
+        raise ValueError("pure INT8 attention cannot contain FP16 prefix blocks")
+    ops = _load_k64_ops()
+    scale = 1.0 / math.sqrt(query_fp16.size(-1))
+    if not active_int8:
+        operation = (
+            ops.fp16_attention
+            if query_block == _BLOCK
+            else ops.q128_fp16_attention
+        )
+        return operation(
+            query_fp16,
+            key_fp16,
+            value_fp16,
+            fp16_block_ids,
+            fp16_block_counts,
+            valid_k_counts,
+            scale,
+        )
 
     operands = prepared_operands
     if operands is None:
-        operands = prepare_k64_fp8_operands(query_fp16, key_fp16, value_fp16)
-    if len(operands) != 6:
-        raise ValueError("prepared_operands must contain Q/K/V and three scales")
-    if type(active_fp16) is not bool:
-        raise TypeError("active_fp16 must be bool")
-    if not active_fp16 and fp16_prefix_blocks != 0:
-        raise ValueError("pure INT8 attention cannot contain FP16 prefix blocks")
-    q8, k8, v8, q_scale, k_scale, v_scale = operands
-    scale = 1.0 / math.sqrt(query_fp16.size(-1))
+        operands = prepare_k64_fp8_operands(
+            query_fp16, key_fp16, value_fp16, query_block=query_block
+        )
+    if len(operands) not in (6, 7):
+        raise ValueError(
+            "prepared_operands must contain Q/K/V, three scales, and optional K mean"
+        )
+    q8, k8, v8, q_scale, k_scale, v_scale = operands[:6]
+    key_mean = operands[6] if len(operands) == 7 else None
     if not active_fp16:
-        return _load_k64_ops().int8_attention(
+        if key_mean is not None:
+            operation = (
+                ops.smooth_int8_attention
+                if query_block == _BLOCK
+                else ops.q128_smooth_int8_attention
+            )
+            return operation(
+                q8,
+                k8,
+                v8,
+                query_fp16,
+                key_mean,
+                fp8_block_ids,
+                fp8_block_counts,
+                q_scale,
+                k_scale,
+                v_scale,
+                valid_k_counts,
+                scale,
+            )
+        operation = (
+            ops.int8_attention
+            if query_block == _BLOCK
+            else ops.q128_int8_attention
+        )
+        return operation(
             q8,
             k8,
             v8,
@@ -157,7 +249,37 @@ def native_k64_mixed_attention(
             valid_k_counts,
             scale,
         )
-    return _load_k64_ops().mixed_attention(
+    if key_mean is not None:
+        operation = (
+            ops.smooth_mixed_attention
+            if query_block == _BLOCK
+            else ops.q128_smooth_mixed_attention
+        )
+        return operation(
+            q8,
+            k8,
+            v8,
+            query_fp16,
+            key_fp16,
+            value_fp16,
+            key_mean,
+            fp8_block_ids,
+            fp8_block_counts,
+            fp16_block_ids,
+            fp16_block_counts,
+            q_scale,
+            k_scale,
+            v_scale,
+            valid_k_counts,
+            fp16_prefix_blocks,
+            scale,
+        )
+    operation = (
+        ops.mixed_attention
+        if query_block == _BLOCK
+        else ops.q128_mixed_attention
+    )
+    return operation(
         q8,
         k8,
         v8,
@@ -199,9 +321,9 @@ def sm89_q64_prefix_int8_attention(
 ) -> torch.Tensor:
     """Run dense prefix queries without allocating a dense block route."""
 
-    if len(shared_operands) != 6:
-        raise ValueError("shared_operands must contain Q/K/V and three scales")
-    _, k8, v8, _, k_scale, v_scale = shared_operands
+    if len(shared_operands) not in (6, 7):
+        raise ValueError("shared_operands must contain Q/K/V, scales, and optional K mean")
+    _, k8, v8, _, k_scale, v_scale = shared_operands[:6]
     return _load_k64_ops().prefix_int8_attention(
         prefix_q8,
         k8,
@@ -236,6 +358,7 @@ def sm89_h3_materialize_route(
     fp8_counts: torch.Tensor,
     fp16_counts: torch.Tensor,
     *,
+    query_block: int = _BLOCK,
     prefix_blocks: int,
     prefix_int8: bool,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -246,7 +369,7 @@ def sm89_h3_materialize_route(
         low_counts,
         fp8_counts,
         fp16_counts,
-        64,
+        query_block,
         prefix_blocks,
         1 if prefix_int8 else 2,
         prefix_int8,
@@ -267,7 +390,7 @@ def pack_h3_k64_qkv(
     video_slot_valid: torch.Tensor,
     prefix_tokens: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Pack exact prefix K/V and stripe-ragged video Q/K/V in one launch."""
+    """Pack exact prefix K/V and compact-ragged video Q/K/V in one launch."""
 
     if query_bhtd.shape != key_bhtd.shape or query_bhtd.shape != value_bhtd.shape:
         raise ValueError("H3 K64 Q/K/V must share [B,H,T,D] shape")
@@ -285,6 +408,56 @@ def pack_h3_k64_qkv(
         video_slot_valid,
         prefix_tokens,
     )
+
+
+def prepare_h3_sm89_int8_operands(
+    query_bhtd: torch.Tensor,
+    key_bhtd: torch.Tensor,
+    value_bhtd: torch.Tensor,
+    video_token_indices: torch.Tensor,
+    video_slot_valid: torch.Tensor,
+    video_valid_counts: torch.Tensor,
+    *,
+    prefix_tokens: int,
+    query_block_size: int,
+    smooth_k: bool = False,
+    has_maxpool: bool = False,
+) -> tuple[torch.Tensor, ...]:
+    """Prepare SM89 Q64/Q128 INT8 operands from one raw Q/K traversal."""
+
+    if type(smooth_k) is not bool:
+        raise TypeError("smooth_k must be bool")
+    if type(has_maxpool) is not bool:
+        raise TypeError("has_maxpool must be bool")
+    if query_block_size not in (_BLOCK, 2 * _BLOCK):
+        raise ValueError("query_block_size must be 64 or 128")
+    return _load_k64_ops().prepare_h3_int8(
+        query_bhtd,
+        key_bhtd,
+        value_bhtd,
+        video_token_indices,
+        video_slot_valid,
+        video_valid_counts,
+        prefix_tokens,
+        query_block_size,
+        smooth_k,
+        has_maxpool,
+    )
+
+
+def sm89_h3_draft_probability(
+    q_pool: torch.Tensor,
+    k_pool: torch.Tensor,
+    q_max_pool: torch.Tensor | None = None,
+    k_max_pool: torch.Tensor | None = None,
+    maxpool_weight: float = 0.0,
+) -> torch.Tensor:
+    """Score Mean/MaxPool DraftMaps through SM89 Tensor Core GEMMs."""
+
+    operation = _load_k64_ops().draft_probability
+    if maxpool_weight == 0.0:
+        return operation(q_pool, k_pool)
+    return operation(q_pool, k_pool, q_max_pool, k_max_pool, maxpool_weight)
 
 
 def assemble_h3_k64_output(
@@ -336,10 +509,12 @@ __all__ = [
     "assemble_h3_k64_output",
     "native_k64_mixed_attention",
     "pack_h3_k64_qkv",
+    "prepare_h3_sm89_int8_operands",
     "pool_compact_k64_key",
     "prepare_prefix_q_int8",
     "prepare_k64_fp8_operands",
     "sm89_h3_materialize_route",
+    "sm89_h3_draft_probability",
     "sm89_h3_route_precision",
     "sm89_q64_prefix_int8_attention",
 ]

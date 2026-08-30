@@ -61,11 +61,16 @@ class AttentionAPITests(unittest.TestCase):
         self.assertEqual(prefixed.sequence_tokens, 951 + 37 * 24 * 42)
         self.assertEqual(visual_only.sequence_tokens, 64)
 
-    def test_public_contract_uses_the_frozen_mean20_surface(self) -> None:
+    def test_public_contract_defaults_to_fixed_80_percent_sparsity(self) -> None:
         self.assertTrue(callable(getattr(anemoi, "anemoi_attention", None)))
         self.assertEqual(
             tuple(field.name for field in fields(anemoi.SparseConfig)),
-            ("query_block_size", "sparsity_ratio", "layer_sparsity_bands"),
+            (
+                "query_block_size",
+                "sparsity_ratio",
+                "layer_sparsity_bands",
+                "maxpool_weight",
+            ),
         )
         self.assertEqual(
             tuple(field.name for field in fields(anemoi.QuantConfig)),
@@ -79,15 +84,31 @@ class AttentionAPITests(unittest.TestCase):
         )
 
         sparse = anemoi.SparseConfig()
-        per_layer = [sparse.sparsity_ratio] * 50
-        for first, last, ratio in sparse.layer_sparsity_bands:
-            per_layer[first:last] = [ratio] * (last - first)
         self.assertEqual(sparse.query_block_size, 64)
         self.assertEqual(sparse.sparsity_ratio, 0.80)
-        self.assertEqual(sparse.layer_sparsity_bands[0], (2, 4, 0.88))
-        self.assertEqual(sparse.layer_sparsity_bands[-1], (49, 50, 0.88))
-        self.assertEqual(len(sparse.layer_sparsity_bands), 43)
-        self.assertAlmostEqual(sum(per_layer[2:]) / 48, 0.80)
+        self.assertEqual(sparse.layer_sparsity_bands, ())
+
+    def test_sparse_config_validates_maxpool_weight(self) -> None:
+        self.assertEqual(anemoi.SparseConfig().maxpool_weight, 0.0)
+        for value in (0, 0.25, 1):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    float(anemoi.SparseConfig(maxpool_weight=value).maxpool_weight),
+                    value,
+                )
+
+        for value, error in (
+            (False, TypeError),
+            ("0.5", TypeError),
+            (float("nan"), ValueError),
+            (-0.1, ValueError),
+            (1.1, ValueError),
+        ):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(error, "maxpool_weight"),
+            ):
+                anemoi.SparseConfig(maxpool_weight=value)
 
     def test_q64_and_q128_share_the_frozen_sm120_dispatch(self) -> None:
         from anemoi.layers.attention.mpa import executor
@@ -109,7 +130,10 @@ class AttentionAPITests(unittest.TestCase):
                     query,
                     layout=anemoi.VisualLayout(video_shape=(1, 1, 128), prefix_tokens=64),
                     layer=37,
-                    sparse_config=anemoi.SparseConfig(query_block_size=query_block_size),
+                    sparse_config=anemoi.SparseConfig(
+                        query_block_size=query_block_size,
+                        maxpool_weight=0.5,
+                    ),
                 )
 
             self.assertIs(result, output)
@@ -117,7 +141,8 @@ class AttentionAPITests(unittest.TestCase):
             self.assertIs(operation.call_args.args[1], query)
             self.assertIs(operation.call_args.args[2], query)
             self.assertEqual(operation.call_args.kwargs["query_block_size"], query_block_size)
-            self.assertEqual(operation.call_args.kwargs["sparsity_ratio"], 0.76)
+            self.assertEqual(operation.call_args.kwargs["sparsity_ratio"], 0.80)
+            self.assertEqual(operation.call_args.kwargs["maxpool_weight"], 0.5)
             self.assertEqual(operation.call_args.kwargs["draftmap_proxy"], "mean")
             self.assertFalse(operation.call_args.kwargs["diag_jensen"])
             self.assertFalse(operation.call_args.kwargs["enable_anchors"])
@@ -271,6 +296,25 @@ class AttentionAPITests(unittest.TestCase):
             )
         operation.assert_not_called()
 
+        with (
+            patch("torch.cuda.get_device_capability", return_value=(8, 9)),
+            patch.object(
+                executor, "sm89_ragged_h3_attention", return_value=query
+            ) as operation,
+        ):
+            result = anemoi.anemoi_attention(
+                query,
+                query,
+                query,
+                layout=anemoi.VisualLayout(
+                    video_shape=(1, 1, 128), prefix_tokens=64
+                ),
+                layer=2,
+                sparse_config=anemoi.SparseConfig(maxpool_weight=0.5),
+            )
+        self.assertIs(result, query)
+        self.assertEqual(operation.call_args.kwargs["maxpool_weight"], 0.5)
+
     def test_sm89_reuses_the_same_public_entry(self) -> None:
         from anemoi.layers.attention.mpa import executor
 
@@ -297,10 +341,11 @@ class AttentionAPITests(unittest.TestCase):
 
         with (
             patch("torch.cuda.get_device_capability", return_value=(8, 9)),
-            patch.object(executor, "sm89_ragged_h3_attention") as operation,
-            self.assertRaisesRegex(RuntimeError, "SM89 supports"),
+            patch.object(
+                executor, "sm89_ragged_h3_attention", return_value=output
+            ) as operation,
         ):
-            anemoi.anemoi_attention(
+            q128_result = anemoi.anemoi_attention(
                 query,
                 query,
                 query,
@@ -308,7 +353,8 @@ class AttentionAPITests(unittest.TestCase):
                 layer=2,
                 sparse_config=anemoi.SparseConfig(query_block_size=128),
             )
-        operation.assert_not_called()
+        self.assertIs(q128_result, output)
+        self.assertEqual(operation.call_args.kwargs["query_block_size"], 128)
 
 
 if __name__ == "__main__":

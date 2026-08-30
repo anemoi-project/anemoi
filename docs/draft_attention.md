@@ -1,5 +1,9 @@
 # Draft Attention
 
+> **Scope:** This document describes the legacy/generic BF16 Draft Attention
+> backend. For the stable native mixed-precision attention API, see
+> [Attention API](attention_api.md).
+
 Anemoi's current Draft Attention backend has three pieces:
 
 1. Reshape visual Q/K into the latent video grid and apply 2D average pooling.
@@ -13,4 +17,3 @@ top-k block mask from the resulting softmax probabilities.
 Only visual tokens enter draft-map guidance. Visual/text and text/text
 interactions remain dense. The output is restored to the model's original token
 order after sparse attention.
-

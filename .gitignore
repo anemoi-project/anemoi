@@ -12,6 +12,8 @@ venv/
 build/
 dist/
 outputs/
+/benchmarks/results/
+/evg/
 checkpoints/
 /models/
 *.mp4

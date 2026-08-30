@@ -931,13 +931,36 @@
 #endif
   }
   // Phase: FP16
-#if MPA_THREE_PHASE || MPA_LOW4_NVFP4
+#if MPA_LOW4_NVFP4 || MPA_MIDDLE_INT8 || MPA_MIDDLE_MXFP8
   const uint32_t high_iterations = HasFp16
       ? static_cast<uint32_t>(
             *reinterpret_cast<volatile int32_t*>(fp16_count + metadata_row))
       : 0;
 #else
   const uint32_t high_iterations = initial_high_iterations;
+#endif
+#if MPA_MIDDLE_INT8 && !MPA_LOW4_NVFP4
+  const uint32_t fp16_route_low_iterations = HasFp16
+      ? static_cast<uint32_t>(
+            *reinterpret_cast<volatile int32_t*>(fp8_count + metadata_row))
+      : 0;
+#else
+  const uint32_t fp16_route_low_iterations = route_low_iterations;
+#endif
+#if MPA_MIDDLE_INT8 && !MPA_LOW4_NVFP4
+  uint32_t fp16_batch_id;
+  uint32_t fp16_head_id;
+  uint32_t fp16_num_qo_heads;
+  if constexpr (HasFp16) {
+    asm volatile("mov.u32 %0, %%ctaid.z;" : "=r"(fp16_batch_id));
+    asm volatile("mov.u32 %0, %%ctaid.y;" : "=r"(fp16_head_id));
+    asm volatile("mov.u32 %0, %%nctaid.y;" : "=r"(fp16_num_qo_heads));
+  }
+  const uint32_t fp16_q_head_row =
+      fp16_batch_id * fp16_num_qo_heads + fp16_head_id;
+#else
+  const uint32_t fp16_head_id = head_id;
+  const uint32_t fp16_num_qo_heads = num_qo_heads;
 #endif
   if constexpr (HasFp16) {
     const bool need_q16 = high_iterations != 0;
@@ -951,7 +974,11 @@
         kCtaQ / (num_warps * half_lines_per_warp);
     if (need_q16) {
       half* q_lane =
-          q16 + ((batch_id * num_qo_heads + head_id) * qo_len +
+#if MPA_MIDDLE_INT8 && !MPA_LOW4_NVFP4
+          q16 + (fp16_q_head_row * qo_len +
+#else
+          q16 + ((batch_id * fp16_num_qo_heads + fp16_head_id) * qo_len +
+#endif
                  query_block * kCtaQ +
                  kCtaQ / num_warps * warp_id + lane_id / half_line_lanes) *
                     HeadDim +
@@ -997,6 +1024,13 @@
         kCtaK / (num_warps * half_lines_per_warp);
 
     if (high_iterations != 0) {
+#if MPA_MIDDLE_INT8 && !MPA_LOW4_NVFP4
+      const uint32_t fp16_kv_head_row =
+          fp16_q_head_row / num_kv_groups;
+#else
+      const uint32_t fp16_kv_head_row =
+          batch_id * num_kv_heads + kv_head;
+#endif
       int32_t* high_lut = fp16_lut + metadata_row * num_physical_stages;
       const uint32_t q_smem_mma = smem_q16.get_permuted_offset(
           get_warp_idx_q<num_warps_q, num_warps_k>() * kWarpQ + lane_id % 16,
@@ -1016,7 +1050,7 @@
             ? iteration
             : static_cast<uint32_t>(
                   high_lut[
-                      route_low_iterations + iteration - fp16_prefix_stages]);
+                      fp16_route_low_iterations + iteration - fp16_prefix_stages]);
 #else
         absolute_stage += static_cast<uint32_t>(high_lut[iteration]);
 #endif
@@ -1025,8 +1059,12 @@
           if (iteration != 0) {
             if constexpr (HasFp8) {
               reload_d128_fq0_q(
-                  smem_q16, q16, batch_id, head_id, num_qo_heads,
+#if MPA_MIDDLE_INT8 && !MPA_LOW4_NVFP4
+                  smem_q16, q16, fp16_q_head_row, query_block, qo_len);
+#else
+                  smem_q16, q16, batch_id, fp16_head_id, fp16_num_qo_heads,
                   query_block, qo_len);
+#endif
             }
           }
         }
@@ -1035,13 +1073,11 @@
           const uint32_t k_load_row =
               absolute_stage * kCtaK + kCtaK / num_warps * warp_id +
               lane_id / half_line_lanes;
-          const uint32_t kv_head_row =
-              batch_id * num_kv_heads + kv_head;
           uint32_t k_logical_row;
           asm volatile(
               "mad.lo.u32 %0, %1, %2, %3;\n"
               : "=r"(k_logical_row)
-              : "r"(kv_head_row), "r"(kv_len), "r"(k_load_row));
+              : "r"(fp16_kv_head_row), "r"(kv_len), "r"(k_load_row));
           half* k_lane =
               k16 + k_logical_row * HeadDim +
               (lane_id % half_line_lanes) * kPackHalf;
@@ -1056,7 +1092,7 @@
               k_lane, k_smem_load, HeadDim, smem_kv16, k_load_row, kv_len);
         } else {
           half* k_lane =
-              k16 + ((batch_id * num_kv_heads + kv_head) * kv_len +
+              k16 + (fp16_kv_head_row * kv_len +
                      absolute_stage * kCtaK +
                      kCtaK / num_warps * warp_id +
                      lane_id / half_line_lanes) *
@@ -1160,8 +1196,6 @@
           const uint32_t v_load_row =
               absolute_stage * kCtaK + kCtaK / num_warps * warp_id +
               lane_id / half_line_lanes;
-          const uint32_t kv_head_row =
-              batch_id * num_kv_heads + kv_head;
           uint32_t v_logical_row;
           // Materialize V's full logical row at its use site.  Leaving the
           // equivalent K/V expression visible lets ptxas keep one row base
@@ -1169,7 +1203,7 @@
           asm volatile(
               "mad.lo.u32 %0, %1, %2, %3;\n"
               : "=r"(v_logical_row)
-              : "r"(kv_head_row), "r"(kv_len), "r"(v_load_row));
+              : "r"(fp16_kv_head_row), "r"(kv_len), "r"(v_load_row));
           half* v_lane =
               v16 + v_logical_row * HeadDim +
               (lane_id % half_line_lanes) * kPackHalf;
@@ -1205,8 +1239,12 @@
               // Refill them while the current fq=0 softmax/PV work runs.
               __syncwarp();
               reload_d128_fq0_q<false, true>(
-                  smem_q16, q16, batch_id, head_id, num_qo_heads,
+#if MPA_MIDDLE_INT8 && !MPA_LOW4_NVFP4
+                  smem_q16, q16, fp16_q_head_row, query_block, qo_len);
+#else
+                  smem_q16, q16, batch_id, fp16_head_id, fp16_num_qo_heads,
                   query_block, qo_len);
+#endif
             }
           }
           update_mdo<1, num_tiles_k, num_tiles_v, false, false, false>(
@@ -1253,7 +1291,7 @@
 
           __syncthreads();
           half* v_lane =
-              v16 + ((batch_id * num_kv_heads + kv_head) * kv_len +
+              v16 + (fp16_kv_head_row * kv_len +
                      absolute_stage * kCtaK +
                      kCtaK / num_warps * warp_id +
                      lane_id / half_line_lanes) *

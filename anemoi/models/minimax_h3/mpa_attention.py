@@ -95,6 +95,8 @@ class H3MPAConfig:
     diag_jensen: bool = False
     enable_anchors: bool = False
     strict: bool = True
+    maxpool_weight: float = 0.0
+    smooth_k: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -109,6 +111,8 @@ class H3MPAConfig:
             raise ValueError("layers_per_step must be a positive integer")
         if type(self.query_block_size) is not int or self.query_block_size not in (64, 128):
             raise ValueError("query_block_size must be 64 or 128")
+        if type(self.smooth_k) is not bool:
+            raise TypeError("smooth_k must be a boolean")
         if self.prefix_kv_precision not in (
             "auto",
             "fp16",
@@ -141,6 +145,14 @@ class H3MPAConfig:
             or not 0.0 <= float(self.sparsity_ratio) < 1.0
         ):
             raise ValueError("sparsity_ratio must be finite and in [0, 1)")
+        if isinstance(self.maxpool_weight, bool) or not isinstance(
+            self.maxpool_weight, (int, float)
+        ):
+            raise TypeError("maxpool_weight must be a real number")
+        if not math.isfinite(float(self.maxpool_weight)) or not 0.0 <= float(
+            self.maxpool_weight
+        ) <= 1.0:
+            raise ValueError("maxpool_weight must be finite and in [0, 1]")
         sm120_ratios = tuple(
             map(
                 float,
@@ -253,6 +265,12 @@ class H3MPAConfig:
             raise ValueError("K-tail requires portable Q64 native phases")
         if k_tail_enabled and self.diag_jensen:
             raise ValueError("K-tail cannot be combined with diag_jensen")
+        if self.maxpool_weight != 0.0 and (
+            self.diag_jensen or k_tail_enabled
+        ):
+            raise ValueError(
+                "maxpool_weight cannot be combined with diag_jensen or K-tail"
+            )
 
     @property
     def video_tokens(self) -> int:
@@ -292,8 +310,6 @@ class H3MPAConfig:
     def sm89_precision(self, layer: int) -> tuple[float, float]:
         """Resolve the SM89 INT8/FP16 pair from portable or legacy fields."""
 
-        if self.query_block_size != 64:
-            raise RuntimeError("SM89 requires query_block_size=64")
         if self.fp8_ratio > 0.0:
             return float(self.fp8_ratio), float(self.fp16_ratio)
         nvfp4, int8, mxfp8, fp16 = self.precision(layer)
@@ -382,6 +398,7 @@ class H3MPAAttention:
             and not config.layer_draftmap_bands
             and not config.diag_jensen
             and not config.enable_anchors
+            and not config.smooth_k
             and config.prefix_kv_precision in ("nvfp4", "int8", "fp16")
             and config.prefix_query_precision in ("int8", "fp16")
         ):
@@ -391,6 +408,7 @@ class H3MPAAttention:
                     query_block_size=config.query_block_size,
                     sparsity_ratio=config.sparsity_ratio,
                     layer_sparsity_bands=config.layer_sparsity_bands,
+                    maxpool_weight=config.maxpool_weight,
                 ),
                 QuantConfig(
                     nvfp4_ratio=config.nvfp4_ratio,
@@ -544,9 +562,12 @@ class H3MPAAttention:
                 retained_int8_ratio=retained_int8,
                 retained_fp16_ratio=retained_fp16,
                 video_shape=self.config.video_shape,
+                query_block_size=self.config.query_block_size,
                 prefix_kv_precision=self.config.prefix_kv_precision,
                 prefix_query_precision=self.config.prefix_query_precision,
+                smooth_k=self.config.smooth_k,
                 diag_jensen=self.config.diag_jensen,
+                maxpool_weight=self.config.maxpool_weight,
                 enable_anchors=self.config.enable_anchors,
             )
         elif capability == (12, 0):
@@ -570,6 +591,7 @@ class H3MPAAttention:
                 prefix_query_precision=self.config.prefix_query_precision,
                 draftmap_proxy=draftmap_proxy,
                 diag_jensen=self.config.diag_jensen,
+                maxpool_weight=self.config.maxpool_weight,
                 enable_anchors=self.config.enable_anchors,
                 nvfp4_scales=(
                     _nvfp4_calibration(layer).scales

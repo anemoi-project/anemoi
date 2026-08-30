@@ -1,0 +1,110 @@
+{
+  "status": "validated",
+  "date": "2026-08-29",
+  "hardware": "NVIDIA GeForce RTX 5090 (SM120)",
+  "toolchain": {
+    "cuda": "13.1",
+    "pytorch": "2.11.0+cu130",
+    "python": "3.12"
+  },
+  "source": {
+    "baseline_commit": "90ca0ea",
+    "candidate_native_commit": "718c4a1",
+    "latest_master_checked": "0450a0c07c9c84fddc59d4ef81ad7cd59a28c4e2",
+    "latest_master_shared_mainloop_matches_baseline": true
+  },
+  "capture": {
+    "path": "/home/zju/work/mixed_precision_attention/results/captures/minimax_h3_sm120_real_duration_20260819/5s/captures/step24_layer25.pt",
+    "sha256": "5b43f0940f2d36a6eb5c6c699dca25499f5f10c0399ae559f06b2a4ecadfed51",
+    "qkv_dtype": "bfloat16",
+    "qkv_shape": [1, 38247, 14, 128],
+    "visual_layout": [37, 24, 42],
+    "prefix_tokens": 951,
+    "effective_sparsity": 0.8,
+    "maxpool_weight": 0.0
+  },
+  "method": {
+    "timing": "CUDA events; three interleaved baseline/candidate rounds; 9 sparse samples per cell per round and 5 Dense samples per round",
+    "aggregate": "median of all samples across the three rounds",
+    "quant_configs": {
+      "int8": [0.0, 1.0, 0.0],
+      "int8_fp16": [0.0, 0.85, 0.15],
+      "nvfp4_int8_fp16": [0.60, 0.25, 0.15]
+    }
+  },
+  "binaries": {
+    "baseline_sha256": "0be4f74a9e05f4bf906cc1602e4519a3faea7189680ad90e25db892d8397a99c",
+    "candidate_sha256": "38b9aaee22b7a7180b65036868c0c36b8e784a4e32845dc8127383689de1637b"
+  },
+  "resource_usage": {
+    "baseline": {
+      "q64_int8": {"registers": 168, "stack_bytes": 0, "spill_store_bytes": 0, "spill_load_bytes": 0},
+      "q64_int8_fp16": {"registers": 174, "stack_bytes": 0, "spill_store_bytes": 0, "spill_load_bytes": 0},
+      "q64_mxfp8_fp16": {"registers": 168, "stack_bytes": 0, "spill_store_bytes": 0, "spill_load_bytes": 0},
+      "q64_nvfp4_int8_fp16": {"registers": 168, "stack_bytes": 0, "spill_store_bytes": 0, "spill_load_bytes": 0}
+    },
+    "candidate": {
+      "q64_int8": {"registers": 168, "stack_bytes": 0, "spill_store_bytes": 0, "spill_load_bytes": 0},
+      "q64_int8_fp16": {"registers": 168, "stack_bytes": 24, "spill_store_bytes": 36, "spill_load_bytes": 32},
+      "q64_mxfp8_fp16": {"registers": 168, "stack_bytes": 0, "spill_store_bytes": 0, "spill_load_bytes": 0},
+      "q64_nvfp4_int8_fp16": {"registers": 168, "stack_bytes": 0, "spill_store_bytes": 0, "spill_load_bytes": 0}
+    },
+    "q64_int8_fp16_register_resident_ctas_per_sm": {"baseline": 2, "candidate": 3},
+    "pure_q64_int8_sass_sha256": {
+      "baseline": "5a7be3d03e17cba0a7288b0db5801518639a382ea62cb2a7e035f7d1efb0a94e",
+      "candidate": "5a7be3d03e17cba0a7288b0db5801518639a382ea62cb2a7e035f7d1efb0a94e"
+    }
+  },
+  "latency_ms": {
+    "dense": {
+      "baseline": 50.54572677612305,
+      "candidate_run": 49.85203170776367,
+      "baseline_round_medians": [50.43718338012695, 50.54572677612305, 50.557952880859375],
+      "candidate_round_medians": [49.82771301269531, 49.85203170776367, 50.587615966796875]
+    },
+    "q64_int8": {
+      "baseline": 6.074016094207764,
+      "candidate": 6.188928127288818,
+      "delta_percent": 1.8918625057749772,
+      "baseline_round_medians": [6.059679985046387, 6.08355188369751, 6.069664001464844],
+      "candidate_round_medians": [6.162240028381348, 6.189504146575928, 6.195680141448975],
+      "interpretation": "control timing variation; baseline and candidate kernel SASS are byte-identical"
+    },
+    "q128_int8": {
+      "baseline": 5.803487777709961,
+      "candidate": 5.7325758934021,
+      "delta_percent": -1.2218839260801029
+    },
+    "q64_int8_fp16": {
+      "baseline": 7.282815933227539,
+      "candidate": 6.863135814666748,
+      "delta_percent": -5.762607793587349,
+      "speedup": 1.0611499072572512,
+      "baseline_round_medians": [7.282815933227539, 7.296735763549805, 7.2715840339660645],
+      "candidate_round_medians": [6.881984233856201, 6.8127360343933105, 6.880288124084473]
+    },
+    "q128_int8_fp16": {
+      "baseline": 6.543360233306885,
+      "candidate": 6.447968006134033,
+      "delta_percent": -1.457847707776927
+    },
+    "q64_nvfp4_int8_fp16": {
+      "baseline": 6.54636812210083,
+      "candidate": 6.476096153259277,
+      "delta_percent": -1.0734496980747465
+    },
+    "q128_nvfp4_int8_fp16": {
+      "baseline": 6.255871772766113,
+      "candidate": 6.2325758934021,
+      "delta_percent": -0.372384220939892
+    }
+  },
+  "correctness": {
+    "q64_int8_fp16_candidate_vs_baseline": "bitwise_equal",
+    "rtol": 0.0,
+    "atol": 0.0,
+    "phase_boundary_persistent_state": ["ro", "m", "d"],
+    "full_test_suite": "205 passed, 4 skipped, 213 subtests passed"
+  },
+  "conclusion": "Keep the isolated Q64 INT8-to-FP16 three-CTA specialization. The bounded spill is cheaper than the former two-CTA register limit, while pure INT8 and sibling phase stacks retain their original kernels."
+}

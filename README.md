@@ -3,7 +3,7 @@
 Anemoi is an inference-only, training-free framework for high-performance visual generation, with a special focus on video generation.
 Unlike existing approaches that operate primarily on flattened 1D token sequences for attention design, Anemoi reasons over spatially structured 2D visual regions ([Draft Attention](https://arxiv.org/pdf/2505.14708)) to identify redundancy and adaptively route attention computation.
 
-Currently, Anemoi supports stripe-compact ragged 2-D routing and native
+Currently, Anemoi supports adaptive compact ragged 2-D routing and native
 Mixed-Precision Attention (MPA) on SM89 and SM120. The executable model family
 is MiniMax-H3 on RTX 4090 and RTX 5090 GPUs.
 
@@ -34,7 +34,7 @@ output = anemoi_attention(
 
 | GPU | Query block | Stable retained-block precision cells | Layout |
 | --- | --- | --- | --- |
-| SM89 / RTX 4090 | Q64 | INT8; INT8 + FP16 | visual-only; packed prefix + video |
+| SM89 / RTX 4090 | Q64/Q128 | INT8; FP16; ordered INT8 + FP16 | visual-only; packed prefix + video |
 | SM120 / RTX 5090 | Q64 | every non-empty combination of NVFP4, INT8, and FP16 | visual-only; packed prefix + video |
 | SM120 / RTX 5090 | Q128 | every non-empty combination of NVFP4, INT8, and FP16 | visual-only; packed prefix + video |
 
@@ -44,13 +44,23 @@ unity Q/K/V global scales by default and accepts an optional
 per-layer scales. The [Attention API guide](docs/attention_api.md) gives the
 complete precision, prefix, and calibration contract.
 
-`SparseConfig` defaults to portable Q64 and the calibrated per-layer Mean20
-budget with 20% average sparse-layer keep. `QuantConfig` defaults to the shared
-INT8 cell; the API guide lists the validated generic precision combinations.
+`SparseConfig` defaults to portable Q64 with a fixed 80% dropped-block ratio
+for every sparse layer; `layer_sparsity_bands=()` means no per-layer overrides.
+`QuantConfig` defaults to the shared INT8 cell; the API guide lists the
+validated generic precision combinations.
 `VisualLayout` supports packed prefix-plus-video and visual-only sequences. See
 the [Attention API guide](docs/attention_api.md) for the complete tensor
 contract, build commands, compatibility table, and a model-independent
 integration example.
+
+SM89 and SM120 Q64/Q128 also accept a configurable Mean/MaxPool routing blend:
+
+```python
+sparse = SparseConfig(query_block_size=128, maxpool_weight=0.5)
+```
+
+`maxpool_weight` is finite in `[0, 1]` and defaults to the existing mean-only
+routing at `0`.
 
 ## Installation
 
@@ -130,7 +140,7 @@ Runtime device capability selects the matching native backend. The canonical
 policy is
 [`examples/minimax-h3/mpa-ragged2d-mixed.yaml`](examples/minimax-h3/mpa-ragged2d-mixed.yaml);
 the SM120 Q64 file is a compatibility alias with the same parsed policy.
-The frozen route uses the calibrated Mean20 policy.
+The frozen route uses a uniform 80% sparsity policy for every sparse layer.
 Pass `--mpa-config` only to select an explicit or edited configuration:
 
 ```bash
@@ -150,7 +160,8 @@ scripts/run_minimax_h3.sh \
 ```
 
 The configuration controls query geometry, sparsity, stable precision phases,
-and the dense-first schedule without requiring Python source changes.
+optional SM89/SM120 Mean/MaxPool routing fusion, and the dense-first schedule
+without requiring Python source changes.
 
 See [the reproduction guide](anemoi/models/minimax_h3/REPRODUCTION.md) for pinned resource revisions, manual setup, smoke tests, output contracts, and resource overrides.
 

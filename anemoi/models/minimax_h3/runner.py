@@ -106,9 +106,10 @@ _MPA_PROFILES: dict[str, dict[str, Any]] = {
         "prefix_query_precision": "int8",
         "diag_jensen": False,
         "enable_anchors": False,
+        "smooth_k": False,
         "route_note": "Mean pooled-QK routing with exact per-head global top-k",
         "tile_note": (
-            "stripe-compact exact cover at logical capacity 64; arbitrary "
+            "compact exact cover at logical capacity 64; arbitrary "
             "positive latent grids execute through physical Q64xK64"
         ),
         "skip_compensation": "unselected blocks are dropped",
@@ -125,6 +126,7 @@ _STABLE_MPA_CONFIG_KEYS = {
     "prefix_query_precision",
     "query_block_size",
     "layer_sparsity_bands",
+    "maxpool_weight",
     "sparsity_ratio",
 }
 _EXPERIMENTAL_MPA_CONFIG_KEYS = _STABLE_MPA_CONFIG_KEYS | {
@@ -135,6 +137,7 @@ _EXPERIMENTAL_MPA_CONFIG_KEYS = _STABLE_MPA_CONFIG_KEYS | {
     "layer_draftmap_bands",
     "diag_jensen",
     "enable_anchors",
+    "smooth_k",
 }
 
 
@@ -146,7 +149,7 @@ def _parser() -> argparse.ArgumentParser:
         default=MPA_MAINLINE_CANDIDATE,
         help=(
             "attention candidate; SM89 and SM120 share the Q64 pure-INT8 "
-            "production policy with stripe-compact ragged 2-D routing"
+            "production policy with compact ragged 2-D routing"
         ),
     )
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -296,7 +299,7 @@ def _apply_mpa_config(profile: dict[str, Any], config: dict[str, Any]) -> None:
     query_block = int(profile.get("query_block_size", 64))
     if query_block == 128:
         profile["tile_note"] = (
-            "per-frame stripe-compact logical capacity 128 with 126 real tokens; "
+            "per-frame compact logical capacity 128 with 126 real tokens; "
             "physical Q128xK64 execution"
         )
 
@@ -386,10 +389,20 @@ def _apply_mpa_config(profile: dict[str, Any], config: dict[str, Any]) -> None:
             raise TypeError("diag_jensen must be a boolean")
         profile["diag_jensen"] = config["diag_jensen"]
 
+    if "maxpool_weight" in config:
+        profile["maxpool_weight"] = _finite_ratio(
+            config["maxpool_weight"], "maxpool_weight", allow_one=True
+        )
+
     if "enable_anchors" in config:
         if type(config["enable_anchors"]) is not bool:
             raise TypeError("enable_anchors must be a boolean")
         profile["enable_anchors"] = config["enable_anchors"]
+
+    if "smooth_k" in config:
+        if type(config["smooth_k"]) is not bool:
+            raise TypeError("smooth_k must be a boolean")
+        profile["smooth_k"] = config["smooth_k"]
 
     if "layer_sparsity_bands" in config:
         bands = config["layer_sparsity_bands"]
@@ -423,7 +436,19 @@ def _apply_mpa_config(profile: dict[str, Any], config: dict[str, Any]) -> None:
         raise ValueError("K-tail requires portable Q64 native phases")
     if k_tail_enabled and profile.get("diag_jensen", False):
         raise ValueError("K-tail cannot be combined with diag_jensen")
-    if k_tail_enabled:
+    maxpool_weight = float(profile.get("maxpool_weight", 0.0))
+    if maxpool_weight != 0.0 and (
+        profile.get("diag_jensen", False) or k_tail_enabled
+    ):
+        raise ValueError(
+            "maxpool_weight cannot be combined with diag_jensen or K-tail"
+        )
+    if maxpool_weight != 0.0:
+        profile["route_note"] = (
+            "Mean/MaxPool probability fusion "
+            f"(maxpool_weight={maxpool_weight:g}) with exact per-head global top-k"
+        )
+    elif k_tail_enabled:
         profile["route_note"] = (
             "native Mean-Q/K-tail probability on configured SM120 Q64 layers; "
             "exact per-head global top-k; missing same-frame ragged adjacency "
@@ -783,7 +808,9 @@ def _make_mpa_attention(
             ),
             diag_jensen=candidate.get("diag_jensen", False),
             enable_anchors=candidate.get("enable_anchors", False),
+            smooth_k=candidate.get("smooth_k", False),
             strict=True,
+            maxpool_weight=candidate.get("maxpool_weight", 0.0),
         )
     )
 

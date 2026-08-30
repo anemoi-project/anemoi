@@ -8,7 +8,9 @@
 
 TORCH_LIBRARY_FRAGMENT(mixed_attention, m) {
   m.def(
-      "sm120_h3_draft_probability(Tensor q_pool, Tensor k_pool) -> Tensor");
+      "sm120_h3_draft_probability(Tensor q_pool, Tensor k_pool, "
+      "Tensor? q_max_pool=None, Tensor? k_max_pool=None, "
+      "float maxpool_weight=0.0) -> Tensor");
   m.def(
       "sm120_h3_k_tail_r1_probability(Tensor q_pool, Tensor k_pool, "
       "Tensor packed_k, Tensor valid_counts, int prefix_blocks) -> Tensor");
@@ -88,11 +90,12 @@ TORCH_LIBRARY_FRAGMENT(mixed_attention, m) {
       "Tensor query, Tensor key, Tensor value, Tensor video_token_indices, "
       "Tensor video_slot_valid, Tensor video_valid_counts, int prefix_tokens, "
       "int query_block_size, bool has_nvfp4, bool has_int8, bool has_mxfp8, "
-      "bool has_fp16, bool has_prefix_query_int8, "
+      "bool has_fp16, bool has_prefix_query_int8, bool has_maxpool, "
       "Tensor? q_global_scale, Tensor? k_global_scale, Tensor? v_global_scale) "
       "-> (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, "
       "Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, "
-      "Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor)");
+      "Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, "
+      "Tensor, Tensor)");
   m.def(
       "prepare_q64_nvfp4(Tensor query, Tensor key, Tensor value, "
       "Tensor q_global_scale, Tensor k_global_scale, "

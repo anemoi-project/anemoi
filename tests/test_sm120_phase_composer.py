@@ -87,14 +87,18 @@ class SM120PhaseComposerTests(unittest.TestCase):
         self.assertNotIn("MPA_AUDIT_PURE_MX", self.source)
 
     def test_q64_and_q128_int8_families_compile_active_only_variants(self) -> None:
-        for query_block in (64, 128):
-            path = INSTANTIATIONS / f"inst_q{query_block}_k64_d128_int8.cu"
+        q64_pure = INSTANTIATIONS / "inst_q64_k64_d128_int8.cu"
+        q64_fp16 = INSTANTIATIONS / "inst_q64_k64_d128_int8_fp16.cu"
+        q128 = INSTANTIATIONS / "inst_q128_k64_d128_int8.cu"
+        for path in (q64_pure, q64_fp16, q128):
             self.assertTrue(path.is_file())
-            source = path.read_text()
-            self.assertIn("#define MPA_MIDDLE_INT8 1", source)
-            self.assertIn("<128, true, false, false>", source)
-            self.assertIn("<128, true, true, false>", source)
+            self.assertIn("#define MPA_MIDDLE_INT8 1", path.read_text())
             self.assertIn(path.name, SETUP.read_text())
+        self.assertIn("<128, true, false, false>", q64_pure.read_text())
+        self.assertNotIn("<128, true, true, false>", q64_pure.read_text())
+        self.assertIn("<128, true, true, false>", q64_fp16.read_text())
+        self.assertIn("<128, true, false, false>", q128.read_text())
+        self.assertIn("<128, true, true, false>", q128.read_text())
 
     def test_int8_public_abi_selects_active_fp16_specialization(self) -> None:
         declarations = DECLARATIONS.read_text()
@@ -103,12 +107,22 @@ class SM120PhaseComposerTests(unittest.TestCase):
         bindings = BINDINGS.read_text()
         for query_block in (64, 128):
             name = f"sm120_q{query_block}_int8_attention_forward"
-            launcher = f"launch_mixed_attention_sm120_q{query_block}_int8"
             self.assertIn(name, api)
             self.assertIn(name, bindings)
-            self.assertIn(launcher, declarations)
-            self.assertIn(f"{launcher}<128, true, false, false>", host)
-            self.assertIn(f"{launcher}<128, true, true, false>", host)
+        self.assertIn("launch_mixed_attention_sm120_q64_int8", declarations)
+        self.assertIn("launch_mixed_attention_sm120_q64_int8_fp16", declarations)
+        self.assertIn(
+            "launch_mixed_attention_sm120_q64_int8<128, true, false, false>",
+            host,
+        )
+        self.assertIn(
+            "launch_mixed_attention_sm120_q64_int8_fp16<128, true, true, false>",
+            host,
+        )
+        q128_launcher = "launch_mixed_attention_sm120_q128_int8"
+        self.assertIn(q128_launcher, declarations)
+        self.assertIn(f"{q128_launcher}<128, true, false, false>", host)
+        self.assertIn(f"{q128_launcher}<128, true, true, false>", host)
         self.assertIn("bool active_fp16 = true", api)
         self.assertIn("bool active_fp16=True", bindings)
         self.assertIn("fp16_block_counts.numel() == 0", host)
@@ -139,8 +153,57 @@ class SM120PhaseComposerTests(unittest.TestCase):
         )
         composer = FRAGMENT.read_text()
         fp16 = composer[composer.index("// Phase: FP16") :]
-        self.assertIn("#if MPA_THREE_PHASE || MPA_LOW4_NVFP4", fp16)
+        self.assertIn(
+            "#if MPA_LOW4_NVFP4 || MPA_MIDDLE_INT8 || MPA_MIDDLE_MXFP8",
+            fp16,
+        )
         self.assertIn("reinterpret_cast<volatile int32_t*>", fp16)
+
+    def test_plain_int8_reloads_its_route_prefix_at_the_fp16_boundary(self) -> None:
+        fp16 = FRAGMENT.read_text().split("// Phase: FP16", 1)[1]
+        self.assertIn(
+            "#if MPA_MIDDLE_INT8 && !MPA_LOW4_NVFP4",
+            fp16,
+        )
+        self.assertIn(
+            "reinterpret_cast<volatile int32_t*>(fp8_count + metadata_row)",
+            fp16,
+        )
+        self.assertIn(
+            "fp16_route_low_iterations + iteration - fp16_prefix_stages",
+            fp16,
+        )
+
+    def test_plain_int8_rematerializes_kv_indices_at_the_fp16_boundary(self) -> None:
+        fp16 = FRAGMENT.read_text().split("// Phase: FP16", 1)[1]
+        main_body = fp16[fp16.index("HalfQKVSmem<HeadDim> smem_kv16") :]
+        self.assertIn("volatile uint32_t* int8_ids", self.source)
+        self.assertIn("int8_ids[0] = blockIdx.z", self.source)
+        self.assertIn("int8_ids[1] = blockIdx.y", self.source)
+        self.assertIn("batch_id = int8_ids[0]", self.source)
+        self.assertIn("head_id = int8_ids[1]", self.source)
+        self.assertIn('"mov.u32 %0, %%ctaid.z;', fp16)
+        self.assertIn('"mov.u32 %0, %%ctaid.y;', fp16)
+        self.assertIn('"mov.u32 %0, %%nctaid.y;', fp16)
+        self.assertIn("fp16_batch_id * fp16_num_qo_heads", fp16)
+        self.assertIn("fp16_kv_head_row", main_body)
+        consumers = main_body.split("#endif", 1)[1]
+        self.assertNotIn("batch_id * num_kv_heads + kv_head", consumers)
+        self.assertGreater(
+            main_body.index("const uint32_t fp16_kv_head_row"),
+            main_body.index("if (high_iterations != 0)"),
+        )
+
+    def test_fp16_phase_keeps_one_combined_kv_row(self) -> None:
+        fp16 = FRAGMENT.read_text().split("HalfQKVSmem<HeadDim> smem_kv16", 1)[1]
+        self.assertIn("const uint32_t fp16_kv_head_row", fp16)
+        self.assertIn(
+            "fp16_q_head_row / num_kv_groups",
+            fp16,
+        )
+        self.assertNotIn("fp16_kv_head_id", fp16)
+        self.assertNotIn("fp16_kv_num_qo_heads", fp16)
+        self.assertNotIn("fp16_num_kv_heads", fp16)
 
     def test_nvfp4_phase_supports_one_or_two_query_fragments(self) -> None:
         fragment = FRAGMENT.read_text()

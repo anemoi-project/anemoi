@@ -347,7 +347,7 @@ std::tuple<torch::Tensor, torch::Tensor> int8_attention_forward(
 
   if constexpr (QueryBlock == 64) {
     auto launcher = active_fp16
-        ? launch_mixed_attention_sm120_q64_int8<128, true, true, false>
+        ? launch_mixed_attention_sm120_q64_int8_fp16<128, true, true, false>
         : launch_mixed_attention_sm120_q64_int8<128, true, false, false>;
     MPA_LAUNCH_INT8(launcher);
   } else {

@@ -11,6 +11,48 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SM120Q64BuildTests(unittest.TestCase):
+    def test_quantized_phases_defer_fp16_count_to_the_phase_boundary(self) -> None:
+        mainloop = (
+            ROOT / "csrc/attention/cuda/sm120/q64_attention.cuh"
+        ).read_text()
+        composer = (
+            ROOT / "csrc/attention/cuda/sm120/q64_attention_phase_composer.inl"
+        ).read_text()
+        condition = (
+            "#if MPA_LOW4_NVFP4 || MPA_MIDDLE_INT8 || MPA_MIDDLE_MXFP8"
+        )
+        entry = mainloop.index("const uint32_t initial_high_iterations")
+        boundary = composer.index("const uint32_t high_iterations")
+        self.assertIn(condition, mainloop[entry - 100 : entry])
+        self.assertIn(condition, composer[boundary - 100 : boundary])
+
+    def test_q64_int8_fp16_has_an_isolated_three_cta_specialization(self) -> None:
+        mainloop = (
+            ROOT / "csrc/attention/cuda/sm120/q64_attention.cuh"
+        ).read_text()
+        pure = (
+            ROOT
+            / "csrc/attention/cuda/sm120/instantiations/inst_q64_k64_d128_int8.cu"
+        )
+        mixed = (
+            ROOT
+            / "csrc/attention/cuda/sm120/instantiations/inst_q64_k64_d128_int8_fp16.cu"
+        )
+        self.assertTrue(mixed.is_file())
+        pure_source = pure.read_text()
+        mixed_source = mixed.read_text()
+        self.assertIn("MPA_MIN_BLOCKS_PER_SM", mainloop)
+        self.assertIn("#if defined(MPA_MIN_BLOCKS_PER_SM)", mainloop)
+        self.assertNotIn("MPA_MIN_BLOCKS_PER_SM", pure_source)
+        self.assertIn("<128, true, false, false>", pure_source)
+        self.assertNotIn("<128, true, true, false>", pure_source)
+        self.assertIn("#define MPA_MIN_BLOCKS_PER_SM 3", mixed_source)
+        self.assertIn("<128, true, true, false>", mixed_source)
+        setup = (ROOT / "setup.py").read_text()
+        host = (ROOT / "csrc/attention/cuda/sm120/q64_attention_host.cu").read_text()
+        self.assertIn('inst_q64_k64_d128_int8_fp16.cu"', setup)
+        self.assertIn("launch_mixed_attention_sm120_q64_int8_fp16", host)
+
     def test_setup_registers_cuda_sources_with_wheel_safe_relative_paths(self) -> None:
         setup = (ROOT / "setup.py").read_text()
 
@@ -59,6 +101,12 @@ class SM120Q64BuildTests(unittest.TestCase):
             self.assertIn("sm120_h3_k_tail_r1_probability", registered)
             self.assertIn("sm120_h3_k_tail_r2_probability", registered)
 
+        draft = source.read_text()
+        self.assertIn("row_softmax_fusion_fp16_kernel", draft)
+        self.assertIn("maxpool_weight == 0.0", draft)
+        self.assertIn("maxpool_weight == 1.0", draft)
+        self.assertIn("launch_draft_gemm(q_max_pool", draft)
+
     def test_donor_first_h3_preparation_keeps_k32_staging_and_cooperative_metadata(
         self,
     ) -> None:
@@ -72,6 +120,10 @@ class SM120Q64BuildTests(unittest.TestCase):
         self.assertIn("staged_token_indices", source)
         self.assertIn("staged_slot_valid", source)
         self.assertNotIn("half tile[64][128]", source)
+        self.assertIn("bool has_maxpool", source)
+        self.assertIn("if constexpr (HasMaxPool)", source)
+        self.assertIn("token_valid", source)
+        self.assertIn("pool_max", source)
 
         bindings = (ROOT / "csrc/attention/cuda/sm120/bindings.cpp").read_text()
         api = (ROOT / "csrc/attention/cuda/sm120/api.h").read_text()
@@ -325,7 +377,9 @@ class SM120Q64BuildTests(unittest.TestCase):
         instantiation = (
             ROOT / "csrc/attention/cuda/sm89/instantiations/inst_k64_d128.cu"
         ).read_text()
-        source = (ROOT / "csrc/attention/cuda/sm89/mixed_attention.cuh").read_text()
+        source = (
+            ROOT / "csrc/attention/cuda/sm89/mixed_attention_phase_composer.inl"
+        ).read_text()
         bindings = (ROOT / "csrc/attention/cuda/sm89/bindings.cpp").read_text()
 
         self.assertIn("<128, true, false, false>", instantiation)
@@ -353,14 +407,97 @@ class SM120Q64BuildTests(unittest.TestCase):
         bindings = (ROOT / "csrc/attention/cuda/sm89/bindings.cpp").read_text()
         self.assertIn("q128_k64_mixed_attention_forward(", bindings)
 
+    def test_sm89_precision_phases_are_composed_inside_persistent_softmax(self) -> None:
+        kernel = (ROOT / "csrc/attention/cuda/sm89/mixed_attention.cuh").read_text()
+        composer = (
+            ROOT / "csrc/attention/cuda/sm89/mixed_attention_phase_composer.inl"
+        ).read_text()
+
+        state = kernel.index("float ro[num_tiles_q][num_tiles_v][8]")
+        composition = kernel.index('#include "mixed_attention_phase_composer.inl"')
+        normalization = kernel.index("float denominator = d[fq][row]", composition)
+        self.assertLess(state, composition)
+        self.assertLess(composition, normalization)
+        self.assertIn("if constexpr (HasFp8)", composer)
+        self.assertIn("if constexpr (HasFp16)", composer)
+        self.assertNotIn("__noinline__", composer)
+
     def test_q128_int8_has_pure_and_mixed_phase_isolation_symbols(self) -> None:
-        instantiation = (
+        mixed_instantiation = (
             ROOT / "csrc/attention/cuda/sm89/instantiations/inst_q128_k64_d128.cu"
         ).read_text()
-        self.assertIn("<128, true, false, false>", instantiation)
-        self.assertIn("<128, true, true, false>", instantiation)
+        int8_instantiation = (
+            ROOT
+            / "csrc/attention/cuda/sm89/instantiations/inst_q128_k64_d128_int8.cu"
+        ).read_text()
+        self.assertIn("<128, true, true, false>", mixed_instantiation)
+        self.assertNotIn("<128, true, false, false>", mixed_instantiation)
+        self.assertIn("<128, true, false, false>", int8_instantiation)
         bindings = (ROOT / "csrc/attention/cuda/sm89/bindings.cpp").read_text()
         self.assertIn("q128_k64_fp8_attention_forward", bindings)
+
+    def test_q128_fp16_has_standalone_phase_audit_symbol(self) -> None:
+        instantiation = (
+            ROOT
+            / "csrc/attention/cuda/sm89/instantiations/inst_q128_k64_d128_fp16.cu"
+        ).read_text()
+        self.assertIn("<128, false, true, false>", instantiation)
+        mixed_instantiation = (
+            ROOT / "csrc/attention/cuda/sm89/instantiations/inst_q128_k64_d128.cu"
+        ).read_text()
+        self.assertNotIn("<128, false, true, false>", mixed_instantiation)
+        bindings = (ROOT / "csrc/attention/cuda/sm89/bindings.cpp").read_text()
+        self.assertIn("q128_k64_fp16_attention_forward", bindings)
+
+    def test_sm89_q128_fp16_reuses_the_pure_score_pipeline(self) -> None:
+        kernel = (ROOT / "csrc/attention/cuda/sm89/mixed_attention.cuh").read_text()
+        composer = (
+            ROOT / "csrc/attention/cuda/sm89/mixed_attention_phase_composer.inl"
+        ).read_text()
+        self.assertIn("float rs[num_tiles_q][num_tiles_k][8]", composer)
+        self.assertNotIn("reload_d128_fq0_q", composer)
+        self.assertNotIn("stash_d128_fq0_scores", kernel + composer)
+        self.assertNotIn("load_d128_fq0_scores", kernel + composer)
+
+    def test_sm89_mixed_loads_fp16_count_at_the_phase_boundary(self) -> None:
+        kernel = (ROOT / "csrc/attention/cuda/sm89/mixed_attention.cuh").read_text()
+        composer = (
+            ROOT / "csrc/attention/cuda/sm89/mixed_attention_phase_composer.inl"
+        ).read_text()
+        self.assertIn("const uint32_t initial_high_iterations", kernel)
+        self.assertIn("HasFp8 && kCtaQ == 128 && low_iterations != 0", kernel)
+        self.assertIn("HasFp8 && kCtaQ == 128", composer)
+        self.assertIn("fp16_count + metadata_row", composer)
+        self.assertIn("reinterpret_cast<volatile int32_t*>", composer)
+
+    def test_sm89_q128_mixed_rematerializes_int8_mma_offsets(self) -> None:
+        composer = (
+            ROOT / "csrc/attention/cuda/sm89/mixed_attention_phase_composer.inl"
+        ).read_text()
+        self.assertEqual(
+            composer.count("if constexpr (HasFp16 && kCtaQ == 128)"), 3
+        )
+
+    def test_sm89_q128_handoffs_only_online_softmax_state(self) -> None:
+        kernel = (ROOT / "csrc/attention/cuda/sm89/mixed_attention.cuh").read_text()
+        composer = (
+            ROOT / "csrc/attention/cuda/sm89/mixed_attention_phase_composer.inl"
+        ).read_text()
+
+        self.assertIn("handoff_online_softmax_registers", kernel)
+        self.assertIn('asm volatile("mov.f32 %0, %0;"', kernel)
+        handoff = composer.index("handoff_online_softmax_registers(ro, m, d);")
+        fp16_phase = composer.index("// Phase: FP16 QK/PV")
+        self.assertLess(handoff, fp16_phase)
+        self.assertEqual(composer.count("handoff_online_softmax_registers"), 1)
+        self.assertIn("HasFp8 && HasFp16 && kCtaQ == 128", composer)
+
+    def test_sm89_q64_pure_int8_uses_the_three_cta_envelope(self) -> None:
+        kernel = (ROOT / "csrc/attention/cuda/sm89/mixed_attention.cuh").read_text()
+
+        self.assertIn("kCtaQ == 64 ? 3 : 1", kernel)
+        self.assertIn("kCtaQ == 64 && HasFp8 && !HasFp16", kernel)
+        self.assertIn("output_warp_id", kernel)
 
     def test_int8_dense_sequential_instances_reuse_the_phase_body(self) -> None:
         setup = (ROOT / "setup.py").read_text()
@@ -393,7 +530,9 @@ class SM120Q64BuildTests(unittest.TestCase):
             self.assertNotIn("MPA_DENSE_SEQUENTIAL", (root / name).read_text())
 
     def test_sm89_optimized_int8_loop_is_shared_by_mixed_phase(self) -> None:
-        source = (ROOT / "csrc/attention/cuda/sm89/mixed_attention.cuh").read_text()
+        source = (
+            ROOT / "csrc/attention/cuda/sm89/mixed_attention_phase_composer.inl"
+        ).read_text()
         low = source[source.index("if constexpr (HasFp8)") : source.index("if constexpr (HasFp16)")]
         self.assertNotIn("if constexpr (HasFp8 && !HasFp16)", low)
         self.assertNotIn("Mixed specializations retain their separate", low)

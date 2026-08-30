@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ from anemoi.models.minimax_h3.runner import (
     DEFAULT_MPA_CONFIG,
     MPA_MAINLINE_CANDIDATE,
     _attention_precision_note,
+    _make_mpa_attention,
     _read_experimental_mpa_config,
     _read_mpa_config,
     _resolved_candidate,
@@ -18,6 +20,125 @@ from anemoi.models.minimax_h3.runner import (
 
 
 class MiniMaxH3MPAConfigTests(unittest.TestCase):
+    def test_experimental_options_extend_the_positional_constructor_abi(self) -> None:
+        self.assertEqual(
+            tuple(inspect.signature(H3MPAConfig).parameters),
+            (
+                "video_shape",
+                "prefix_tokens",
+                "sparsity_ratio",
+                "query_block_size",
+                "prefix_kv_precision",
+                "prefix_query_precision",
+                "fp8_ratio",
+                "nvfp4_ratio",
+                "int8_ratio",
+                "mxfp8_ratio",
+                "fp16_ratio",
+                "dense_first_steps",
+                "dense_first_layers",
+                "layers_per_step",
+                "layer_sparsity_bands",
+                "layer_precision_bands",
+                "draftmap_proxy",
+                "layer_draftmap_bands",
+                "diag_jensen",
+                "enable_anchors",
+                "strict",
+                "maxpool_weight",
+                "smooth_k",
+            ),
+        )
+
+    def test_maxpool_weight_validates_probability_fusion_contract(self) -> None:
+        self.assertEqual(H3MPAConfig().maxpool_weight, 0.0)
+        for value in (0, 0.25, 1):
+            with self.subTest(valid=value):
+                self.assertEqual(
+                    float(H3MPAConfig(maxpool_weight=value).maxpool_weight), value
+                )
+
+        for value, exception in (
+            (False, TypeError),
+            ("0.5", TypeError),
+            (complex(0.5), TypeError),
+            (float("nan"), ValueError),
+            (float("inf"), ValueError),
+            (-0.01, ValueError),
+            (1.01, ValueError),
+        ):
+            with (
+                self.subTest(invalid=value),
+                self.assertRaisesRegex(exception, "maxpool_weight"),
+            ):
+                H3MPAConfig(maxpool_weight=value)
+
+        for fields in (
+            {"diag_jensen": True},
+            {"draftmap_proxy": "k_tail_r1"},
+            {"draftmap_proxy": "k_tail_r2"},
+            {"layer_draftmap_bands": ((38, 39, "k_tail_r1"),)},
+            {"layer_draftmap_bands": ((42, 43, "k_tail_r2"),)},
+        ):
+            with (
+                self.subTest(fields=fields),
+                self.assertRaisesRegex(ValueError, "maxpool_weight"),
+            ):
+                H3MPAConfig(maxpool_weight=0.25, **fields)
+
+    def test_stable_yaml_maxpool_weight_reaches_constructed_attention(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "mpa.yaml"
+            path.write_text("maxpool_weight: 0.25\n")
+            policy = _resolved_candidate(
+                MPA_MAINLINE_CANDIDATE,
+                mpa_config=_read_mpa_config(path),
+            )
+
+        attention = _make_mpa_attention(
+            policy,
+            prefix_tokens=64,
+            video_shape=(1, 1, 64),
+        )
+        self.assertEqual(policy["maxpool_weight"], 0.25)
+        self.assertEqual(
+            policy["route_note"],
+            "Mean/MaxPool probability fusion (maxpool_weight=0.25) "
+            "with exact per-head global top-k",
+        )
+        self.assertEqual(attention.config.maxpool_weight, 0.25)
+
+    def test_runner_rejects_invalid_maxpool_combinations(self) -> None:
+        for value, exception in (
+            (True, TypeError),
+            ("0.25", TypeError),
+            (float("nan"), ValueError),
+            (-0.01, ValueError),
+            (1.01, ValueError),
+        ):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(exception, "maxpool_weight"),
+            ):
+                _resolved_candidate(
+                    MPA_MAINLINE_CANDIDATE,
+                    mpa_config={"maxpool_weight": value},
+                )
+
+        for config in (
+            {"diag_jensen": True},
+            {"draftmap_proxy": "k_tail_r1"},
+            {"layer_draftmap_bands": [[42, 43, "k_tail_r2"]]},
+        ):
+            with (
+                self.subTest(config=config),
+                self.assertRaisesRegex(ValueError, "maxpool_weight"),
+            ):
+                _resolved_candidate(
+                    MPA_MAINLINE_CANDIDATE,
+                    mpa_config={"maxpool_weight": 0.25, **config},
+                )
+
     def test_launcher_uses_one_default_config_for_sm89_and_sm120(self) -> None:
         launcher = (Path(__file__).resolve().parents[1] / "scripts/run_minimax_h3.sh").read_text()
 
@@ -33,11 +154,14 @@ class MiniMaxH3MPAConfigTests(unittest.TestCase):
 
         self.assertNotIn("diag_jensen", config)
         self.assertNotIn("enable_anchors", config)
+        self.assertNotIn("smooth_k", config)
         self.assertNotIn("mxfp8_ratio", config)
         self.assertFalse(policy["diag_jensen"])
         self.assertFalse(policy["enable_anchors"])
+        self.assertFalse(policy["smooth_k"])
         self.assertFalse(H3MPAConfig().diag_jensen)
         self.assertFalse(H3MPAConfig().enable_anchors)
+        self.assertFalse(H3MPAConfig().smooth_k)
 
     def test_released_route_note_describes_active_routing(self) -> None:
         policy = _resolved_candidate(MPA_MAINLINE_CANDIDATE)
@@ -232,10 +356,8 @@ class MiniMaxH3MPAConfigTests(unittest.TestCase):
             {"nvfp4": 0.0, "int8": 1.0, "mxfp8": 0.0, "fp16": 0.0},
         )
         self.assertEqual(policy["video_sparsity_ratio"], 0.80)
-        self.assertEqual(
-            policy["layer_sparsity_bands"],
-            SparseConfig().layer_sparsity_bands,
-        )
+        self.assertEqual(policy["layer_sparsity_bands"], ())
+        self.assertEqual(H3MPAConfig().layer_sparsity_bands, ())
         self.assertAlmostEqual(policy["average_sparse_layer_sparsity_ratio"], 0.80)
         self.assertEqual(policy["dense_first_steps"], 10)
         self.assertEqual(policy["dense_first_layers"], 2)

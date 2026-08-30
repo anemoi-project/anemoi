@@ -13,7 +13,7 @@ using H3SM120Prepared = std::tuple<
     torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
     torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
     torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
-    torch::Tensor>;
+    torch::Tensor, torch::Tensor, torch::Tensor>;
 
 H3SM120Prepared prepare_h3_sm120_operands(
     torch::Tensor query,
@@ -29,13 +29,26 @@ H3SM120Prepared prepare_h3_sm120_operands(
     bool has_mxfp8,
     bool has_fp16,
     bool has_prefix_query_int8,
+    bool has_maxpool,
     std::optional<torch::Tensor> q_global_scale,
     std::optional<torch::Tensor> k_global_scale,
     std::optional<torch::Tensor> v_global_scale);
 
 torch::Tensor sm120_h3_draft_probability(
     torch::Tensor q_pool,
-    torch::Tensor k_pool);
+    torch::Tensor k_pool,
+    std::optional<torch::Tensor> q_max_pool,
+    std::optional<torch::Tensor> k_max_pool,
+    double maxpool_weight);
+
+// The same architecture-neutral GEMM/softmax implementation is linked into
+// the SM89 extension under an architecture-owned public symbol.
+torch::Tensor sm89_h3_draft_probability(
+    torch::Tensor q_pool,
+    torch::Tensor k_pool,
+    std::optional<torch::Tensor> q_max_pool,
+    std::optional<torch::Tensor> k_max_pool,
+    double maxpool_weight);
 
 torch::Tensor sm120_h3_k_tail_r1_probability(
     torch::Tensor q_pool,

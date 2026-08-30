@@ -67,7 +67,7 @@ def anemoi_attention(
 | Public type | Purpose |
 | --- | --- |
 | `VisualLayout(video_shape, prefix_tokens=0)` | Describes the packed prefix and 3-D visual token grid |
-| `SparseConfig(...)` | Selects Q64/Q128 and the base/per-layer dropped-block ratio |
+| `SparseConfig(...)` | Selects Q64/Q128, the dropped-block ratio, and optional SM89/SM120 Mean/MaxPool routing fusion |
 | `QuantConfig(...)` | Splits retained visual blocks across public precision phases and selects prefix precision |
 | `NVFP4Calibration(q_scale=1.0, k_scale=1.0, v_scale=1.0)` | Optionally supplies independent tensor-level NVFP4 Q/K/V scales |
 
@@ -110,14 +110,33 @@ result has the same BSHD shape and dtype as `query`.
 per-layer sparsity value must be finite and in `[0, 1)`; each value is the
 fraction of visual block pairs dropped. Layer bands are sorted, disjoint
 `(first, last, sparsity)` tuples with zero-based, half-open `[first, last)`
-ranges. The default is Q64 with the Mean20 layer schedule and an average 80%
-drop ratio over layers 2 through 49.
+ranges. The default is Q64 with `sparsity_ratio=0.80` and
+`layer_sparsity_bands=()`, so every sparse layer drops 80% of routed visual
+block pairs. Explicit layer bands remain available as overrides.
+
+`SparseConfig.maxpool_weight` is finite in `[0, 1]` and defaults to `0`. On
+SM89 and SM120 Q64/Q128, let `w = maxpool_weight`; the independently normalized
+routing probability is
+
+```text
+(1 - w) * softmax(Q_mean @ K_mean^T / sqrt(128))
+    + w * softmax(Q_max @ K_max^T / sqrt(128))
+```
+
+Mean and elementwise max descriptors use the same ragged Q/K block traversal;
+invalid padding tokens do not participate in the maximum. Weight `0` preserves
+the legacy mean-only path without max-pool allocation, weight `1` runs only the
+max probability map, and an interior weight computes and fuses both maps.
+SM89 and SM120 both fuse max descriptors into their existing donor-first Q/K
+preparation traversal. Thus the disabled path performs no max allocation or
+max reduction, while an enabled path adds no second raw-Q/K traversal.
 
 ```python
 from anemoi import SparseConfig
 
 q64 = SparseConfig()
 q128 = SparseConfig(query_block_size=128)
+maxpool = SparseConfig(query_block_size=128, maxpool_weight=0.5)
 custom = SparseConfig(
     query_block_size=64,
     sparsity_ratio=0.80,
@@ -161,16 +180,20 @@ all other public precision ratios are zero.
 | NVFP4 + INT8 + FP16 | Stable | Stable | NVFP4, INT8, or FP16 | INT8 or FP16 |
 
 Thus the stable SM120 Q128 set is a superset of the Q64 set; at present the
-two public sets are equal. For `prefix_tokens > 0`, prefix-query INT8 requires
+two public sets are equal. Both query geometries support the optional
+`maxpool_weight` routing blend described above. For `prefix_tokens > 0`,
+prefix-query INT8 requires
 an active retained-video INT8 phase. Prefix-query FP16 uses dense
 original-dtype attention, while `prefix_kv_precision` independently selects
 NVFP4, INT8, or FP16 for prefix K/V. The two prefix fields do not affect
 computation when `prefix_tokens=0`.
 
-SM89 supports Q64 with either pure INT8 or mixed INT8 + FP16 retained visual
-blocks; INT8 must have a positive ratio. Both prefix fields accept INT8 or
-FP16, and both layout forms are supported. Runtime dispatch requires an exact
-SM89 or SM120 CUDA capability.
+SM89 supports Q64 and Q128 with pure INT8, pure FP16, or ordered INT8 + FP16
+retained visual blocks. Pure phases dispatch their standalone specialization;
+the mixed kernel always executes INT8 before FP16. Both prefix fields accept
+INT8 or FP16, both query geometries support the same optional
+`maxpool_weight` routing blend, and both layout forms are supported. Runtime dispatch requires
+an exact SM89 or SM120 CUDA capability.
 
 ## 🛠️ NVFP4 calibration
 

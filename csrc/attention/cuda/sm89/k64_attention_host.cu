@@ -31,9 +31,46 @@ void check_same_device(
       " must be on the same CUDA device as query");
 }
 
+__global__ void add_smoothed_lse_offset_kernel(
+    const half* __restrict__ query,
+    const half* __restrict__ key_mean,
+    float* __restrict__ lse,
+    int64_t heads,
+    int64_t kv_heads,
+    int64_t query_tokens,
+    float softmax_scale) {
+  const int32_t lane = threadIdx.x;
+  const int32_t row_in_block = threadIdx.y;
+  const int64_t row = blockIdx.x * blockDim.y + row_in_block;
+  if (row >= query_tokens) return;
+  const int64_t batch = blockIdx.z;
+  const int64_t head = blockIdx.y;
+  const int64_t kv_head = head / (heads / kv_heads);
+  const half* query_row =
+      query + ((batch * heads + head) * query_tokens + row) * 128;
+  const half* mean_row = key_mean + (batch * kv_heads + kv_head) * 128;
+  float dot = 0.0f;
+#pragma unroll
+  for (int32_t channel = lane; channel < 128; channel += 32) {
+    dot = fmaf(
+        __half2float(query_row[channel]),
+        __half2float(mean_row[channel]),
+        dot);
+  }
+#pragma unroll
+  for (int32_t mask = 16; mask > 0; mask >>= 1) {
+    dot += __shfl_xor_sync(0xffffffffU, dot, mask);
+  }
+  if (lane == 0) {
+    lse[(batch * heads + head) * query_tokens + row] +=
+        dot * softmax_scale;
+  }
+}
+
 }  // namespace
 
-std::tuple<torch::Tensor, torch::Tensor> k64_fp16_attention_forward(
+template <uint32_t QueryBlock>
+std::tuple<torch::Tensor, torch::Tensor> fp16_attention_forward(
     torch::Tensor query,
     torch::Tensor key,
     torch::Tensor value,
@@ -41,6 +78,7 @@ std::tuple<torch::Tensor, torch::Tensor> k64_fp16_attention_forward(
     torch::Tensor block_counts,
     torch::Tensor valid_k_counts,
     double softmax_scale) {
+  static_assert(QueryBlock == 64 || QueryBlock == 128);
   for (const auto& item : {
            std::pair<const torch::Tensor*, const char*>(&query, "query"),
            std::pair<const torch::Tensor*, const char*>(&key, "key"),
@@ -81,16 +119,17 @@ std::tuple<torch::Tensor, torch::Tensor> k64_fp16_attention_forward(
               "block_counts must be int32");
   TORCH_CHECK(valid_k_counts.scalar_type() == at::ScalarType::Int,
               "valid_k_counts must be int32");
-  const int64_t query_blocks = (query.size(2) + 63) / 64;
+  const int64_t query_blocks =
+      (query.size(2) + QueryBlock - 1) / QueryBlock;
   const int64_t key_blocks = key.size(2) / 64;
   TORCH_CHECK(
       block_ids.sizes() == torch::IntArrayRef(
           {query.size(0), query.size(1), query_blocks, key_blocks}),
-      "block_ids must have shape [B,Hq,ceil(Q/64),K/64]");
+      "block_ids must have shape [B,Hq,ceil(Q/query_block),K/64]");
   TORCH_CHECK(
       block_counts.sizes() ==
           torch::IntArrayRef({query.size(0), query.size(1), query_blocks}),
-      "block_counts must have shape [B,Hq,ceil(Q/64)]");
+      "block_counts must have shape [B,Hq,ceil(Q/query_block)]");
   TORCH_CHECK(
       valid_k_counts.sizes() ==
           torch::IntArrayRef({query.size(0), key_blocks}),
@@ -103,27 +142,62 @@ std::tuple<torch::Tensor, torch::Tensor> k64_fp16_attention_forward(
 
   c10::cuda::CUDAGuard device_guard(query.device());
   cudaStream_t stream = at::cuda::getCurrentCUDAStream(query.get_device());
-  launch_mixed_attention_sm89_k64<128, false, true, false>(
-      nullptr, nullptr, nullptr,
-      reinterpret_cast<half*>(query.data_ptr<at::Half>()),
-      reinterpret_cast<half*>(key.data_ptr<at::Half>()),
-      reinterpret_cast<half*>(value.data_ptr<at::Half>()), nullptr,
-      reinterpret_cast<half*>(output.data_ptr<at::Half>()),
-      nullptr, nullptr, block_ids.data_ptr<int32_t>(),
-      block_counts.data_ptr<int32_t>(), nullptr, nullptr, nullptr,
-      valid_k_counts.data_ptr<int32_t>(), lse.data_ptr<float>(),
-      0,
-      static_cast<uint32_t>(query.size(0)),
-      static_cast<uint32_t>(query.size(2)),
-      static_cast<uint32_t>(key.size(2)), 0,
-      static_cast<uint32_t>(query.size(1)),
-      static_cast<uint32_t>(key.size(1)),
-      static_cast<float>(softmax_scale), stream);
+  if constexpr (QueryBlock == 64) {
+    launch_mixed_attention_sm89_k64<128, false, true, false>(
+        nullptr, nullptr, nullptr,
+        reinterpret_cast<half*>(query.data_ptr<at::Half>()),
+        reinterpret_cast<half*>(key.data_ptr<at::Half>()),
+        reinterpret_cast<half*>(value.data_ptr<at::Half>()), nullptr,
+        reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+        nullptr, nullptr, block_ids.data_ptr<int32_t>(),
+        block_counts.data_ptr<int32_t>(), nullptr, nullptr, nullptr,
+        valid_k_counts.data_ptr<int32_t>(), lse.data_ptr<float>(), 0,
+        static_cast<uint32_t>(query.size(0)),
+        static_cast<uint32_t>(query.size(2)),
+        static_cast<uint32_t>(key.size(2)), 0,
+        static_cast<uint32_t>(query.size(1)),
+        static_cast<uint32_t>(key.size(1)),
+        static_cast<float>(softmax_scale), stream);
+  } else {
+    launch_mixed_attention_sm89_q128_k64<128, false, true, false>(
+        nullptr, nullptr, nullptr,
+        reinterpret_cast<half*>(query.data_ptr<at::Half>()),
+        reinterpret_cast<half*>(key.data_ptr<at::Half>()),
+        reinterpret_cast<half*>(value.data_ptr<at::Half>()), nullptr,
+        reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+        nullptr, nullptr, block_ids.data_ptr<int32_t>(),
+        block_counts.data_ptr<int32_t>(), nullptr, nullptr, nullptr,
+        valid_k_counts.data_ptr<int32_t>(), lse.data_ptr<float>(), 0,
+        static_cast<uint32_t>(query.size(0)),
+        static_cast<uint32_t>(query.size(2)),
+        static_cast<uint32_t>(key.size(2)), 0,
+        static_cast<uint32_t>(query.size(1)),
+        static_cast<uint32_t>(key.size(1)),
+        static_cast<float>(softmax_scale), stream);
+  }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return {output, lse};
 }
 
-template <uint32_t QueryBlock>
+std::tuple<torch::Tensor, torch::Tensor> k64_fp16_attention_forward(
+    torch::Tensor query, torch::Tensor key, torch::Tensor value,
+    torch::Tensor block_ids, torch::Tensor block_counts,
+    torch::Tensor valid_k_counts, double softmax_scale) {
+  return fp16_attention_forward<64>(
+      query, key, value, block_ids, block_counts, valid_k_counts,
+      softmax_scale);
+}
+
+std::tuple<torch::Tensor, torch::Tensor> q128_k64_fp16_attention_forward(
+    torch::Tensor query, torch::Tensor key, torch::Tensor value,
+    torch::Tensor block_ids, torch::Tensor block_counts,
+    torch::Tensor valid_k_counts, double softmax_scale) {
+  return fp16_attention_forward<128>(
+      query, key, value, block_ids, block_counts, valid_k_counts,
+      softmax_scale);
+}
+
+template <uint32_t QueryBlock, bool SmoothK>
 std::tuple<torch::Tensor, torch::Tensor> mixed_attention_forward(
     torch::Tensor q8,
     torch::Tensor k8,
@@ -131,6 +205,7 @@ std::tuple<torch::Tensor, torch::Tensor> mixed_attention_forward(
     torch::Tensor q16,
     torch::Tensor k16,
     torch::Tensor v16,
+    torch::Tensor key_mean,
     torch::Tensor fp8_block_ids,
     torch::Tensor fp8_block_counts,
     torch::Tensor fp16_block_ids,
@@ -186,6 +261,15 @@ std::tuple<torch::Tensor, torch::Tensor> mixed_attention_forward(
               "native mixed K64 currently requires head_dim=128");
   TORCH_CHECK(q16.size(1) % k16.size(1) == 0,
               "query heads must be divisible by KV heads");
+  if constexpr (SmoothK) {
+    check_cuda_contiguous(key_mean, "key_mean");
+    check_same_device(key_mean, q16, "key_mean");
+    TORCH_CHECK(
+        key_mean.scalar_type() == at::ScalarType::Half &&
+            key_mean.sizes() == torch::IntArrayRef(
+                {q16.size(0), k16.size(1), q16.size(3)}),
+        "key_mean must have FP16 shape [B,Hkv,D] when K-smooth is enabled");
+  }
   TORCH_CHECK(
       std::isfinite(softmax_scale) && softmax_scale > 0.0,
       "softmax_scale must be finite and positive");
@@ -273,12 +357,15 @@ std::tuple<torch::Tensor, torch::Tensor> mixed_attention_forward(
   c10::cuda::CUDAGuard device_guard(q16.device());
   cudaStream_t stream = at::cuda::getCurrentCUDAStream(q16.get_device());
   if constexpr (QueryBlock == 64) {
-    launch_mixed_attention_sm89_k64<128, true, true, false>(
+    launch_mixed_attention_sm89_k64<128, true, true, SmoothK>(
         q8.data_ptr<int8_t>(), k8.data_ptr<int8_t>(),
         reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr()),
         reinterpret_cast<half*>(q16.data_ptr<at::Half>()),
         reinterpret_cast<half*>(k16.data_ptr<at::Half>()),
-        reinterpret_cast<half*>(v16.data_ptr<at::Half>()), nullptr,
+        reinterpret_cast<half*>(v16.data_ptr<at::Half>()),
+        SmoothK
+            ? reinterpret_cast<half*>(key_mean.data_ptr<at::Half>())
+            : nullptr,
         reinterpret_cast<half*>(output.data_ptr<at::Half>()),
         fp8_block_ids.data_ptr<int32_t>(),
         fp8_block_counts.data_ptr<int32_t>(),
@@ -295,12 +382,15 @@ std::tuple<torch::Tensor, torch::Tensor> mixed_attention_forward(
         static_cast<uint32_t>(k16.size(1)),
         static_cast<float>(softmax_scale), stream);
   } else {
-    launch_mixed_attention_sm89_q128_k64<128, true, true, false>(
+    launch_mixed_attention_sm89_q128_k64<128, true, true, SmoothK>(
         q8.data_ptr<int8_t>(), k8.data_ptr<int8_t>(),
         reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr()),
         reinterpret_cast<half*>(q16.data_ptr<at::Half>()),
         reinterpret_cast<half*>(k16.data_ptr<at::Half>()),
-        reinterpret_cast<half*>(v16.data_ptr<at::Half>()), nullptr,
+        reinterpret_cast<half*>(v16.data_ptr<at::Half>()),
+        SmoothK
+            ? reinterpret_cast<half*>(key_mean.data_ptr<at::Half>())
+            : nullptr,
         reinterpret_cast<half*>(output.data_ptr<at::Half>()),
         fp8_block_ids.data_ptr<int32_t>(),
         fp8_block_counts.data_ptr<int32_t>(),
@@ -329,8 +419,9 @@ std::tuple<torch::Tensor, torch::Tensor> k64_mixed_attention_forward(
     torch::Tensor q_scale, torch::Tensor k_scale, torch::Tensor v_scale,
     torch::Tensor valid_k_counts, int64_t fp16_prefix_blocks,
     double softmax_scale) {
-  return mixed_attention_forward<64>(
-      q8, k8, v8, q16, k16, v16, fp8_block_ids, fp8_block_counts,
+  return mixed_attention_forward<64, false>(
+      q8, k8, v8, q16, k16, v16, torch::Tensor(),
+      fp8_block_ids, fp8_block_counts,
       fp16_block_ids, fp16_block_counts, q_scale, k_scale, v_scale,
       valid_k_counts, fp16_prefix_blocks, softmax_scale);
 }
@@ -343,13 +434,47 @@ std::tuple<torch::Tensor, torch::Tensor> q128_k64_mixed_attention_forward(
     torch::Tensor q_scale, torch::Tensor k_scale, torch::Tensor v_scale,
     torch::Tensor valid_k_counts, int64_t fp16_prefix_blocks,
     double softmax_scale) {
-  return mixed_attention_forward<128>(
-      q8, k8, v8, q16, k16, v16, fp8_block_ids, fp8_block_counts,
+  return mixed_attention_forward<128, false>(
+      q8, k8, v8, q16, k16, v16, torch::Tensor(),
+      fp8_block_ids, fp8_block_counts,
       fp16_block_ids, fp16_block_counts, q_scale, k_scale, v_scale,
       valid_k_counts, fp16_prefix_blocks, softmax_scale);
 }
 
-template <uint32_t QueryBlock>
+std::tuple<torch::Tensor, torch::Tensor> k64_smooth_mixed_attention_forward(
+    torch::Tensor q8, torch::Tensor k8, torch::Tensor v8,
+    torch::Tensor q16, torch::Tensor k16, torch::Tensor v16,
+    torch::Tensor key_mean,
+    torch::Tensor fp8_block_ids, torch::Tensor fp8_block_counts,
+    torch::Tensor fp16_block_ids, torch::Tensor fp16_block_counts,
+    torch::Tensor q_scale, torch::Tensor k_scale, torch::Tensor v_scale,
+    torch::Tensor valid_k_counts, int64_t fp16_prefix_blocks,
+    double softmax_scale) {
+  return mixed_attention_forward<64, true>(
+      q8, k8, v8, q16, k16, v16, key_mean,
+      fp8_block_ids, fp8_block_counts, fp16_block_ids, fp16_block_counts,
+      q_scale, k_scale, v_scale, valid_k_counts, fp16_prefix_blocks,
+      softmax_scale);
+}
+
+std::tuple<torch::Tensor, torch::Tensor>
+q128_k64_smooth_mixed_attention_forward(
+    torch::Tensor q8, torch::Tensor k8, torch::Tensor v8,
+    torch::Tensor q16, torch::Tensor k16, torch::Tensor v16,
+    torch::Tensor key_mean,
+    torch::Tensor fp8_block_ids, torch::Tensor fp8_block_counts,
+    torch::Tensor fp16_block_ids, torch::Tensor fp16_block_counts,
+    torch::Tensor q_scale, torch::Tensor k_scale, torch::Tensor v_scale,
+    torch::Tensor valid_k_counts, int64_t fp16_prefix_blocks,
+    double softmax_scale) {
+  return mixed_attention_forward<128, true>(
+      q8, k8, v8, q16, k16, v16, key_mean,
+      fp8_block_ids, fp8_block_counts, fp16_block_ids, fp16_block_counts,
+      q_scale, k_scale, v_scale, valid_k_counts, fp16_prefix_blocks,
+      softmax_scale);
+}
+
+template <uint32_t QueryBlock, bool SmoothK>
 std::tuple<torch::Tensor, torch::Tensor> pure_fp8_attention_forward(
     torch::Tensor q8,
     torch::Tensor k8,
@@ -360,6 +485,8 @@ std::tuple<torch::Tensor, torch::Tensor> pure_fp8_attention_forward(
     torch::Tensor k_scale,
     torch::Tensor v_scale,
     torch::Tensor valid_k_counts,
+    torch::Tensor q16,
+    torch::Tensor key_mean,
     double softmax_scale) {
   for (const auto& item : {
            std::pair<const torch::Tensor*, const char*>(&q8, "q8"),
@@ -415,6 +542,20 @@ std::tuple<torch::Tensor, torch::Tensor> pure_fp8_attention_forward(
   TORCH_CHECK(
       std::isfinite(softmax_scale) && softmax_scale > 0.0,
       "softmax_scale must be finite and positive");
+  if constexpr (SmoothK) {
+    check_cuda_contiguous(q16, "q16");
+    check_same_device(q16, q8, "q16");
+    check_cuda_contiguous(key_mean, "key_mean");
+    check_same_device(key_mean, q8, "key_mean");
+    TORCH_CHECK(
+        q16.scalar_type() == at::ScalarType::Half && q16.sizes() == q8.sizes(),
+        "q16 must be FP16 and match q8 when K-smooth is enabled");
+    TORCH_CHECK(
+        key_mean.scalar_type() == at::ScalarType::Half &&
+            key_mean.sizes() == torch::IntArrayRef(
+                {q8.size(0), k8.size(1), q8.size(3)}),
+        "key_mean must have FP16 shape [B,Hkv,D] when K-smooth is enabled");
+  }
 
   auto output = torch::empty(q8.sizes(), q8.options().dtype(at::ScalarType::Half));
   auto lse = torch::empty(
@@ -452,6 +593,20 @@ std::tuple<torch::Tensor, torch::Tensor> pure_fp8_attention_forward(
         stream);
   }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
+  if constexpr (SmoothK) {
+    const dim3 correction_grid(
+        static_cast<uint32_t>((q8.size(2) + 3) / 4),
+        static_cast<uint32_t>(q8.size(1)),
+        static_cast<uint32_t>(q8.size(0)));
+    const dim3 correction_block(32, 4);
+    add_smoothed_lse_offset_kernel<<<
+        correction_grid, correction_block, 0, stream>>>(
+        reinterpret_cast<const half*>(q16.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(key_mean.data_ptr<at::Half>()),
+        lse.data_ptr<float>(), q8.size(1), k8.size(1), q8.size(2),
+        static_cast<float>(softmax_scale));
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+  }
   return {output, lse};
 }
 
@@ -460,9 +615,9 @@ std::tuple<torch::Tensor, torch::Tensor> k64_fp8_attention_forward(
     torch::Tensor block_ids, torch::Tensor block_counts,
     torch::Tensor q_scale, torch::Tensor k_scale, torch::Tensor v_scale,
     torch::Tensor valid_k_counts, double softmax_scale) {
-  return pure_fp8_attention_forward<64>(
+  return pure_fp8_attention_forward<64, false>(
       q8, k8, v8, block_ids, block_counts, q_scale, k_scale, v_scale,
-      valid_k_counts, softmax_scale);
+      valid_k_counts, torch::Tensor(), torch::Tensor(), softmax_scale);
 }
 
 std::tuple<torch::Tensor, torch::Tensor> q128_k64_fp8_attention_forward(
@@ -470,9 +625,32 @@ std::tuple<torch::Tensor, torch::Tensor> q128_k64_fp8_attention_forward(
     torch::Tensor block_ids, torch::Tensor block_counts,
     torch::Tensor q_scale, torch::Tensor k_scale, torch::Tensor v_scale,
     torch::Tensor valid_k_counts, double softmax_scale) {
-  return pure_fp8_attention_forward<128>(
+  return pure_fp8_attention_forward<128, false>(
       q8, k8, v8, block_ids, block_counts, q_scale, k_scale, v_scale,
-      valid_k_counts, softmax_scale);
+      valid_k_counts, torch::Tensor(), torch::Tensor(), softmax_scale);
+}
+
+std::tuple<torch::Tensor, torch::Tensor> k64_smooth_fp8_attention_forward(
+    torch::Tensor q8, torch::Tensor k8, torch::Tensor v8,
+    torch::Tensor q16, torch::Tensor key_mean,
+    torch::Tensor block_ids, torch::Tensor block_counts,
+    torch::Tensor q_scale, torch::Tensor k_scale, torch::Tensor v_scale,
+    torch::Tensor valid_k_counts, double softmax_scale) {
+  return pure_fp8_attention_forward<64, true>(
+      q8, k8, v8, block_ids, block_counts, q_scale, k_scale, v_scale,
+      valid_k_counts, q16, key_mean, softmax_scale);
+}
+
+std::tuple<torch::Tensor, torch::Tensor>
+q128_k64_smooth_fp8_attention_forward(
+    torch::Tensor q8, torch::Tensor k8, torch::Tensor v8,
+    torch::Tensor q16, torch::Tensor key_mean,
+    torch::Tensor block_ids, torch::Tensor block_counts,
+    torch::Tensor q_scale, torch::Tensor k_scale, torch::Tensor v_scale,
+    torch::Tensor valid_k_counts, double softmax_scale) {
+  return pure_fp8_attention_forward<128, true>(
+      q8, k8, v8, block_ids, block_counts, q_scale, k_scale, v_scale,
+      valid_k_counts, q16, key_mean, softmax_scale);
 }
 
 torch::Tensor sm89_q64_prefix_int8_attention_forward(

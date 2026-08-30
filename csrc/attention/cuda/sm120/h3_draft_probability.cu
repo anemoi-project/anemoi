@@ -33,6 +33,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <utility>
 
 #include "api.h"
 
@@ -161,6 +162,62 @@ __global__ __launch_bounds__(kSoftmaxThreads) void row_softmax_fp16_kernel(
         __half2float(logits_probability[row_offset + column]) - row_max) *
         inverse_sum;
     logits_probability[row_offset + column] = __float2half_rn(normalized);
+  }
+}
+
+__global__ __launch_bounds__(kSoftmaxThreads)
+void row_softmax_fusion_fp16_kernel(
+    half* mean_logits_probability,
+    const half* __restrict__ max_logits,
+    int64_t row_count,
+    int64_t columns,
+    float maxpool_weight) {
+  const int64_t row = static_cast<int64_t>(blockIdx.x);
+  if (row >= row_count) return;
+  const int64_t row_offset = row * columns;
+  __shared__ float mean_scratch[kSoftmaxWarps];
+  __shared__ float max_scratch[kSoftmaxWarps];
+
+  float local_mean_max = -CUDART_INF_F;
+  float local_max_max = -CUDART_INF_F;
+  for (int64_t column = threadIdx.x; column < columns;
+       column += blockDim.x) {
+    local_mean_max = fmaxf(
+        local_mean_max,
+        __half2float(mean_logits_probability[row_offset + column]));
+    local_max_max = fmaxf(
+        local_max_max, __half2float(max_logits[row_offset + column]));
+  }
+  const float mean_row_max = block_reduce<true>(
+      local_mean_max, mean_scratch);
+  const float max_row_max = block_reduce<true>(local_max_max, max_scratch);
+
+  float local_mean_sum = 0.0f;
+  float local_max_sum = 0.0f;
+  for (int64_t column = threadIdx.x; column < columns;
+       column += blockDim.x) {
+    local_mean_sum += expf(
+        __half2float(mean_logits_probability[row_offset + column]) -
+        mean_row_max);
+    local_max_sum += expf(
+        __half2float(max_logits[row_offset + column]) - max_row_max);
+  }
+  const float mean_inverse_sum = 1.0f / block_reduce<false>(
+      local_mean_sum, mean_scratch);
+  const float max_inverse_sum = 1.0f / block_reduce<false>(
+      local_max_sum, max_scratch);
+  const float mean_weight = 1.0f - maxpool_weight;
+
+  for (int64_t column = threadIdx.x; column < columns;
+       column += blockDim.x) {
+    const float mean_probability = expf(
+        __half2float(mean_logits_probability[row_offset + column]) -
+        mean_row_max) * mean_inverse_sum;
+    const float max_probability = expf(
+        __half2float(max_logits[row_offset + column]) - max_row_max) *
+        max_inverse_sum;
+    mean_logits_probability[row_offset + column] = __float2half_rn(
+        mean_weight * mean_probability + maxpool_weight * max_probability);
   }
 }
 
@@ -469,9 +526,21 @@ cublasHandle_t checked_current_draft_handle(cudaStream_t stream) {
 
 }  // namespace
 
-torch::Tensor sm120_h3_draft_probability(
+namespace {
+
+torch::Tensor h3_draft_probability_impl(
     torch::Tensor q_pool,
-    torch::Tensor k_pool) {
+    torch::Tensor k_pool,
+    std::optional<torch::Tensor> q_max_pool_optional,
+    std::optional<torch::Tensor> k_max_pool_optional,
+    double maxpool_weight,
+    int required_major,
+    int required_minor,
+    const char* operation_name) {
+  TORCH_CHECK(
+      std::isfinite(maxpool_weight) && maxpool_weight >= 0.0 &&
+          maxpool_weight <= 1.0,
+      "maxpool_weight must be finite and in [0, 1]");
   check_pool_tensor(q_pool, "q_pool");
   check_pool_tensor(k_pool, "k_pool");
   TORCH_CHECK(
@@ -489,13 +558,30 @@ torch::Tensor sm120_h3_draft_probability(
   TORCH_CHECK(
       q_pool.size(1) % k_pool.size(1) == 0,
       "Q pool heads must be divisible by KV pool heads");
+  if (maxpool_weight != 0.0) {
+    TORCH_CHECK(
+        q_max_pool_optional.has_value() && k_max_pool_optional.has_value(),
+        "nonzero maxpool_weight requires q_max_pool and k_max_pool");
+    check_pool_tensor(*q_max_pool_optional, "q_max_pool");
+    check_pool_tensor(*k_max_pool_optional, "k_max_pool");
+    TORCH_CHECK(
+        q_max_pool_optional->device() == q_pool.device() &&
+            k_max_pool_optional->device() == k_pool.device() &&
+            q_max_pool_optional->sizes() == q_pool.sizes() &&
+            k_max_pool_optional->sizes() == k_pool.sizes(),
+        "max pools must match their mean-pool shapes and devices");
+  }
 
   c10::cuda::CUDAGuard device_guard(q_pool.device());
   const cudaDeviceProp* properties =
       at::cuda::getDeviceProperties(q_pool.get_device());
   TORCH_CHECK(
-      properties->major == 12 && properties->minor == 0,
-      "sm120_h3_draft_probability requires SM120, found sm_",
+      properties->major == required_major && properties->minor == required_minor,
+      operation_name,
+      " requires sm_",
+      required_major,
+      required_minor,
+      ", found sm_",
       properties->major,
       properties->minor);
 
@@ -513,21 +599,91 @@ torch::Tensor sm120_h3_draft_probability(
       at::cuda::getCurrentCUDAStream(q_pool.get_device());
   cublasHandle_t handle = checked_current_draft_handle(stream);
 
-  launch_draft_gemm(q_pool, k_pool, logits, handle);
   const int64_t softmax_rows = checked_positive_product(
       output_heads, rows, "Draft softmax row count");
   TORCH_CHECK(
       softmax_rows <= kMaxGridX, "Draft softmax grid.x exceeds CUDA limit");
-  row_softmax_fp16_kernel<<<
+  if (maxpool_weight == 0.0) {
+    launch_draft_gemm(q_pool, k_pool, logits, handle);
+    row_softmax_fp16_kernel<<<
+        static_cast<unsigned int>(softmax_rows),
+        kSoftmaxThreads,
+        0,
+        stream>>>(
+        reinterpret_cast<half*>(logits.data_ptr<at::Half>()),
+        softmax_rows,
+        rows);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return logits;
+  }
+
+  const torch::Tensor& q_max_pool = *q_max_pool_optional;
+  const torch::Tensor& k_max_pool = *k_max_pool_optional;
+  if (maxpool_weight == 1.0) {
+    launch_draft_gemm(q_max_pool, k_max_pool, logits, handle);
+    row_softmax_fp16_kernel<<<
+        static_cast<unsigned int>(softmax_rows),
+        kSoftmaxThreads,
+        0,
+        stream>>>(
+        reinterpret_cast<half*>(logits.data_ptr<at::Half>()),
+        softmax_rows,
+        rows);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return logits;
+  }
+
+  launch_draft_gemm(q_pool, k_pool, logits, handle);
+  auto max_logits = torch::empty_like(logits);
+  launch_draft_gemm(q_max_pool, k_max_pool, max_logits, handle);
+  row_softmax_fusion_fp16_kernel<<<
       static_cast<unsigned int>(softmax_rows),
       kSoftmaxThreads,
       0,
       stream>>>(
       reinterpret_cast<half*>(logits.data_ptr<at::Half>()),
+      reinterpret_cast<const half*>(max_logits.data_ptr<at::Half>()),
       softmax_rows,
-      rows);
+      rows,
+      static_cast<float>(maxpool_weight));
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return logits;
+}
+
+}  // namespace
+
+torch::Tensor sm120_h3_draft_probability(
+    torch::Tensor q_pool,
+    torch::Tensor k_pool,
+    std::optional<torch::Tensor> q_max_pool,
+    std::optional<torch::Tensor> k_max_pool,
+    double maxpool_weight) {
+  return h3_draft_probability_impl(
+      std::move(q_pool),
+      std::move(k_pool),
+      std::move(q_max_pool),
+      std::move(k_max_pool),
+      maxpool_weight,
+      12,
+      0,
+      "sm120_h3_draft_probability");
+}
+
+torch::Tensor sm89_h3_draft_probability(
+    torch::Tensor q_pool,
+    torch::Tensor k_pool,
+    std::optional<torch::Tensor> q_max_pool,
+    std::optional<torch::Tensor> k_max_pool,
+    double maxpool_weight) {
+  return h3_draft_probability_impl(
+      std::move(q_pool),
+      std::move(k_pool),
+      std::move(q_max_pool),
+      std::move(k_max_pool),
+      maxpool_weight,
+      8,
+      9,
+      "sm89_h3_draft_probability");
 }
 
 namespace {

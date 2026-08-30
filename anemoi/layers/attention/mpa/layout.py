@@ -1,4 +1,4 @@
-"""Device metadata for stripe-compact ragged 2-D packing and routing."""
+"""Device metadata for compact ragged 2-D packing and routing."""
 
 from __future__ import annotations
 

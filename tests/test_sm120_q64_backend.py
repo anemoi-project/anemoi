@@ -108,6 +108,26 @@ class SM120Q64BackendTests(unittest.TestCase):
         self.assertEqual(result, "probability")
         self.assertEqual(operation.call_args.args, (q_pool, k_pool))
 
+    def test_h3_draft_wrapper_forwards_probability_fusion_inputs(self) -> None:
+        from anemoi.layers.attention.mpa.backends import sm120_q64
+
+        operation = Mock(return_value="probability")
+        q_mean = torch.empty((1, 14, 32, 128), dtype=torch.float16)
+        k_mean = torch.empty_like(q_mean)
+        q_max = torch.empty_like(q_mean)
+        k_max = torch.empty_like(q_mean)
+        with patch.object(
+            sm120_q64, "_load_h3_draft", return_value=operation
+        ):
+            result = sm120_q64.sm120_h3_draft_probability(
+                q_mean, k_mean, q_max, k_max, maxpool_weight=0.25
+            )
+
+        self.assertEqual(result, "probability")
+        self.assertEqual(
+            operation.call_args.args, (q_mean, k_mean, q_max, k_max, 0.25)
+        )
+
     def test_h3_k_tail_r2_wrapper_forwards_prepared_inputs(self) -> None:
         from anemoi.layers.attention.mpa.backends import sm120_q64
 
@@ -153,7 +173,7 @@ class SM120Q64BackendTests(unittest.TestCase):
     ) -> None:
         from anemoi.layers.attention.mpa.backends import sm120_q64
 
-        operation = Mock(return_value=tuple(range(25)))
+        operation = Mock(return_value=tuple(range(27)))
         query = key = value = torch.empty(
             (1, 2, 192, 128), dtype=torch.bfloat16
         )
@@ -179,10 +199,11 @@ class SM120Q64BackendTests(unittest.TestCase):
                 has_mxfp8=True,
                 has_fp16=True,
                 has_prefix_query_int8=True,
+                has_maxpool=True,
                 global_scales=scales,
             )
 
-        self.assertEqual(result, tuple(range(25)))
+        self.assertEqual(result, tuple(range(27)))
         self.assertEqual(
             operation.call_args.args,
             (
@@ -194,6 +215,7 @@ class SM120Q64BackendTests(unittest.TestCase):
                 counts,
                 64,
                 128,
+                True,
                 True,
                 True,
                 True,

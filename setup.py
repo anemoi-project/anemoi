@@ -76,6 +76,7 @@ def _extensions():
                 name="anemoi.layers.attention.mpa._cuda_attention",
                 sources=[
                     _source(sm89 / "bindings.cpp"),
+                    _source(attention / "sm120" / "h3_draft_probability.cu"),
                     _source(sm89 / "h3_route_precision.cu"),
                     _source(sm89 / "k64_attention_host.cu"),
                     _source(sm89 / "value_preprocess.cu"),
@@ -84,6 +85,8 @@ def _extensions():
                     _source(sm89 / "instantiations" / "inst_k64_d128.cu"),
                     _source(sm89 / "instantiations" / "inst_k64_d128_int8_dense.cu"),
                     _source(sm89 / "instantiations" / "inst_q128_k64_d128.cu"),
+                    _source(sm89 / "instantiations" / "inst_q128_k64_d128_fp16.cu"),
+                    _source(sm89 / "instantiations" / "inst_q128_k64_d128_int8.cu"),
                 ],
                 include_dirs=[
                     str(attention),
@@ -122,6 +125,7 @@ def _extensions():
                     _source(sm120 / "q64_attention_host.cu"),
                     _source(sm120 / "instantiations" / "inst_q64_k64_d128_fp16.cu"),
                     _source(sm120 / "instantiations" / "inst_q64_k64_d128_int8.cu"),
+                    _source(sm120 / "instantiations" / "inst_q64_k64_d128_int8_fp16.cu"),
                     _source(sm120 / "instantiations" / "inst_q64_k64_d128_int8_dense.cu"),
                     _source(sm120 / "instantiations" / "inst_q128_k64_d128_fp16.cu"),
                     _source(sm120 / "instantiations" / "inst_q128_k64_d128_int8.cu"),

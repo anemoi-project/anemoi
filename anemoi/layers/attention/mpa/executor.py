@@ -13,9 +13,10 @@ from anemoi.layers.attention.mpa.backends.sm89_k64 import (
     assemble_h3_k64_output,
     native_k64_mixed_attention,
     pack_h3_k64_qkv,
-    pool_compact_k64_key,
+    prepare_h3_sm89_int8_operands,
     prepare_k64_fp8_operands,
     prepare_prefix_q_int8,
+    sm89_h3_draft_probability,
     sm89_h3_materialize_route,
     sm89_h3_route_precision,
     sm89_q64_prefix_int8_attention,
@@ -83,13 +84,24 @@ def _pool_query(
     query_fp16: torch.Tensor,
     counts: torch.Tensor,
     block: int = _BLOCK,
+    maximum: bool = False,
 ) -> torch.Tensor:
     batch, heads, tokens, head_dim = query_fp16.shape
     blocks = tokens // block
+    blocked = query_fp16.view(batch, heads, blocks, block, head_dim)
+    if maximum:
+        valid = torch.arange(block, device=query_fp16.device).view(
+            1, 1, 1, block, 1
+        ) < counts.view(batch, 1, blocks, 1, 1)
+        return (
+            blocked.masked_fill(~valid, -torch.inf)
+            .amax(dim=3)
+            .to(torch.float16)
+            .contiguous()
+        )
     denominator = counts.to(torch.float32).view(batch, 1, blocks, 1)
     return (
-        query_fp16.view(batch, heads, blocks, block, head_dim)
-        .sum(dim=3, dtype=torch.float32)
+        blocked.sum(dim=3, dtype=torch.float32)
         .div_(denominator)
         .to(torch.float16)
         .contiguous()
@@ -368,6 +380,7 @@ def _prepare_h3_sm120_inputs(
     query_block_size: int,
     phases: tuple[str, ...],
     has_prefix_query_int8: bool = False,
+    has_maxpool: bool = False,
     global_scales: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None,
 ) -> tuple[object, ...]:
     prepared = prepare_h3_sm120_operands(
@@ -384,6 +397,7 @@ def _prepare_h3_sm120_inputs(
         has_mxfp8="mxfp8" in phases,
         has_fp16="fp16" in phases,
         has_prefix_query_int8=has_prefix_query_int8,
+        has_maxpool=has_maxpool,
         global_scales=global_scales,
     )
     return (
@@ -394,6 +408,8 @@ def _prepare_h3_sm120_inputs(
         prepared[11:17],
         prepared[17:23],
         prepared[23:25],
+        prepared[25],
+        prepared[26],
     )
 
 
@@ -605,12 +621,15 @@ def sm89_ragged_h3_attention(
     retained_int8_ratio: float,
     retained_fp16_ratio: float,
     video_shape: tuple[int, int, int],
+    query_block_size: int = 64,
     prefix_kv_precision: str = "auto",
     prefix_query_precision: str = "auto",
+    smooth_k: bool = False,
     diag_jensen: bool = False,
+    maxpool_weight: float = 0.0,
     enable_anchors: bool = False,
 ) -> torch.Tensor:
-    """Run ragged 2-D routing through the optimized native Q64xK64 kernel."""
+    """Run ragged 2-D routing through the native Q64/Q128 x K64 kernel."""
 
     if q_bshd.shape != k_bshd.shape or q_bshd.shape != v_bshd.shape:
         raise ValueError("Q/K/V must share [1,S,H,128]")
@@ -628,6 +647,8 @@ def sm89_ragged_h3_attention(
         raise ValueError("Q/K/V must be same-dtype CUDA [1,S,H,128]")
     if torch.cuda.get_device_capability(q_bshd.device) != (8, 9):
         raise RuntimeError("the released native path requires SM89")
+    if query_block_size not in (64, 128):
+        raise ValueError("query_block_size must be 64 or 128")
     if type(prefix_tokens) is not int or not 0 <= prefix_tokens < q_bshd.size(1):
         raise ValueError("prefix_tokens must be nonnegative and precede the video tokens")
     if (
@@ -637,10 +658,18 @@ def sm89_ragged_h3_attention(
         or math.prod(video_shape) != q_bshd.size(1) - prefix_tokens
     ):
         raise ValueError("video_shape must match the post-prefix token count")
-    if type(diag_jensen) is not bool:
-        raise TypeError("diag_jensen must be bool")
-    if type(enable_anchors) is not bool:
-        raise TypeError("enable_anchors must be bool")
+    if any(type(value) is not bool for value in (diag_jensen, enable_anchors, smooth_k)):
+        raise TypeError("diag_jensen, enable_anchors, and smooth_k must be bool")
+    if isinstance(maxpool_weight, bool) or not isinstance(
+        maxpool_weight, (int, float)
+    ):
+        raise TypeError("maxpool_weight must be a real number")
+    if not math.isfinite(float(maxpool_weight)) or not 0.0 <= float(
+        maxpool_weight
+    ) <= 1.0:
+        raise ValueError("maxpool_weight must be finite and in [0, 1]")
+    if maxpool_weight != 0.0 and diag_jensen:
+        raise ValueError("maxpool_weight cannot be combined with diag_jensen")
     ratios = (float(retained_int8_ratio), float(retained_fp16_ratio))
     if (
         any(not math.isfinite(value) or value < 0.0 for value in ratios)
@@ -680,18 +709,37 @@ def sm89_ragged_h3_attention(
         frames=frames,
         height=height,
         width=width,
-        logical_block=_BLOCK,
+        logical_block=query_block_size,
         enable_anchors=enable_anchors,
     )
-    q_packed, key_fp16, value_fp16 = pack_h3_k64_qkv(
+    (
+        q_pool,
+        k_pool,
+        q_packed,
+        key_fp16,
+        value_fp16,
+        q8,
+        k8,
+        v8,
+        q8_scale,
+        k8_scale,
+        v8_scale,
+        k_mean,
+        q_max_pool,
+        k_max_pool,
+    ) = prepare_h3_sm89_int8_operands(
         q_bshd.permute(0, 2, 1, 3),
         k_bshd.permute(0, 2, 1, 3),
         v_bshd.permute(0, 2, 1, 3),
         layout.indices,
         layout.slot_valid,
-        prefix_tokens,
+        layout.counts,
+        prefix_tokens=prefix_tokens,
+        query_block_size=query_block_size,
+        smooth_k=smooth_k,
+        has_maxpool=maxpool_weight != 0.0,
     )
-    _warmup_sync("QKV packing", q_bshd.device)
+    _warmup_sync("single-load QKV/INT8 preparation", q_bshd.device)
     batch, heads, _, _ = q_packed.shape
     video_blocks = layout.counts.numel()
     video_counts = layout.counts.view(1, video_blocks).expand(batch, video_blocks).contiguous()
@@ -708,10 +756,17 @@ def sm89_ragged_h3_attention(
         .expand(batch, prefix_blocks)
         .contiguous()
     )
-    valid_k = torch.cat((prefix_counts, video_counts), dim=1).contiguous()
+    valid_k = (
+        _expand_q128_valid_k(prefix_counts, video_counts)
+        if query_block_size == 128
+        else torch.cat((prefix_counts, video_counts), dim=1).contiguous()
+    )
     key_video = key_fp16[:, :, prefix_capacity:]
 
-    prepared_operands = prepare_k64_fp8_operands(q_packed, key_fp16, value_fp16)
+    prepared_operands = (q8, k8, v8, q8_scale, k8_scale, v8_scale)
+    if smooth_k:
+        prepared_operands += (k_mean,)
+    del q8, k8, v8, q8_scale, k8_scale, v8_scale, k_mean
     if prefix_query_int8:
         prefix_stream.wait_stream(current_stream)
         with torch.cuda.stream(prefix_stream):
@@ -723,15 +778,13 @@ def sm89_ragged_h3_attention(
                 prefix_tokens,
             )
 
-    q_pool = _pool_query(q_packed, video_counts)
-    k_pool = pool_compact_k64_key(key_video, video_counts)
     moments = diag_jensen
     q_second = None
     k_second = None
     if moments:
         denominator = video_counts.to(torch.float32).view(1, 1, video_blocks, 1)
         q_second = (
-            q_packed.view(1, heads, video_blocks, _BLOCK, -1)
+            q_packed.view(1, heads, video_blocks, query_block_size, -1)
             .float()
             .square_()
             .sum(dim=3)
@@ -740,7 +793,7 @@ def sm89_ragged_h3_attention(
             .contiguous()
         )
         k_second = (
-            key_video.view(1, heads, video_blocks, _BLOCK, -1)
+            key_video.view(1, heads, video_blocks, query_block_size, -1)
             .float()
             .square_()
             .sum(dim=3)
@@ -748,12 +801,24 @@ def sm89_ragged_h3_attention(
             .to(torch.float16)
             .contiguous()
         )
-    probability = draft_probability(
-        q_pool,
-        k_pool,
-        q_second=q_second,
-        k_second=k_second,
-    )
+    if diag_jensen:
+        probability = draft_probability(
+            q_pool,
+            k_pool,
+            q_second=q_second,
+            k_second=k_second,
+        )
+    elif maxpool_weight == 0.0:
+        # Preserve the exact legacy Mean-only route when the feature is off.
+        probability = draft_probability(q_pool, k_pool)
+    else:
+        probability = sm89_h3_draft_probability(
+            q_pool,
+            k_pool,
+            q_max_pool,
+            k_max_pool,
+            maxpool_weight=maxpool_weight,
+        )
     route = _route_sm89_probability(
         probability,
         layout.anchors,
@@ -768,13 +833,15 @@ def sm89_ragged_h3_attention(
         route.nvfp4_counts,
         route.fp8_counts,
         route.fp16_counts,
+        query_block=query_block_size,
         prefix_blocks=prefix_blocks,
         prefix_int8=prefix_kv_int8,
     )
     _warmup_sync("native DraftMap route and materialization", q_bshd.device)
 
     del prefix_counts, video_counts
-    del key_video, q_pool, k_pool, q_second, k_second, probability, route
+    del key_video, q_pool, k_pool, q_max_pool, k_max_pool
+    del q_second, k_second, probability, route
     video_output, _ = native_k64_mixed_attention(
         q_packed,
         key_fp16,
@@ -786,7 +853,9 @@ def sm89_ragged_h3_attention(
         valid_k,
         fp16_prefix_blocks=0 if prefix_kv_int8 else prefix_blocks,
         prepared_operands=prepared_operands,
+        active_int8=ratios[0] > 0.0 or prefix_kv_int8,
         active_fp16=ratios[1] > 0.0 or not prefix_kv_int8,
+        query_block=query_block_size,
     )
     _warmup_sync("mixed attention", q_bshd.device)
     del q_packed, key_fp16, value_fp16, valid_k, ids
@@ -820,6 +889,7 @@ def sm120_ragged_h3_attention(
     prefix_query_precision: str = "auto",
     draftmap_proxy: str = "mean",
     diag_jensen: bool = False,
+    maxpool_weight: float = 0.0,
     enable_anchors: bool = False,
     profile_nvtx: bool = False,
     nvfp4_scales: tuple[float, float, float] = (1.0, 1.0, 1.0),
@@ -848,6 +918,20 @@ def sm120_ragged_h3_attention(
         raise ValueError("query_block_size must be 64 or 128")
     if draftmap_proxy not in ("mean", "k_tail_r1", "k_tail_r2"):
         raise ValueError("draftmap_proxy must be mean, k_tail_r1, or k_tail_r2")
+    if isinstance(maxpool_weight, bool) or not isinstance(
+        maxpool_weight, (int, float)
+    ):
+        raise TypeError("maxpool_weight must be a real number")
+    if not math.isfinite(float(maxpool_weight)) or not 0.0 <= float(
+        maxpool_weight
+    ) <= 1.0:
+        raise ValueError("maxpool_weight must be finite and in [0, 1]")
+    if maxpool_weight != 0.0 and (
+        diag_jensen or draftmap_proxy in ("k_tail_r1", "k_tail_r2")
+    ):
+        raise ValueError(
+            "maxpool_weight cannot be combined with diag_jensen or K-tail"
+        )
     if draftmap_proxy in ("k_tail_r1", "k_tail_r2") and query_block_size != 64:
         raise ValueError("K-tail requires the Q64 SM120 path")
     if draftmap_proxy in ("k_tail_r1", "k_tail_r2") and diag_jensen:
@@ -919,6 +1003,8 @@ def sm120_ragged_h3_attention(
     int8_operands = None
     mxfp8_operands = None
     prefix_int8_operands = None
+    q_max_pool = None
+    k_max_pool = None
     raw_query = q_bshd.permute(0, 2, 1, 3)
     raw_key = k_bshd.permute(0, 2, 1, 3)
     raw_value = v_bshd.permute(0, 2, 1, 3)
@@ -933,6 +1019,8 @@ def sm120_ragged_h3_attention(
             mxfp8_operands,
             int8_operands,
             prefix_int8_operands,
+            q_max_pool,
+            k_max_pool,
         ) = _prepare_h3_sm120_inputs(
             raw_query,
             raw_key,
@@ -944,6 +1032,7 @@ def sm120_ragged_h3_attention(
             query_block_size=query_block_size,
             phases=phases,
             has_prefix_query_int8=native_prefix_int8,
+            has_maxpool=maxpool_weight != 0.0,
             global_scales=global_scales,
         )
     else:
@@ -979,6 +1068,13 @@ def sm120_ragged_h3_attention(
     if not any(phase in phases for phase in ("nvfp4", "int8", "mxfp8")):
         q_pool = _pool_query(query_fp16, video_counts, query_block_size)
         k_pool = _pool_query(key_video, video_counts, query_block_size)
+        if maxpool_weight != 0.0:
+            q_max_pool = _pool_query(
+                query_fp16, video_counts, query_block_size, maximum=True
+            )
+            k_max_pool = _pool_query(
+                key_video, video_counts, query_block_size, maximum=True
+            )
     if profile_nvtx:
         torch.cuda.nvtx.range_pop()
     if native_prefix_int8:
@@ -1040,7 +1136,16 @@ def sm120_ragged_h3_attention(
             prefix_blocks,
         )
     else:
-        probability = sm120_h3_draft_probability(q_pool, k_pool)
+        if maxpool_weight == 0.0:
+            probability = sm120_h3_draft_probability(q_pool, k_pool)
+        else:
+            probability = sm120_h3_draft_probability(
+                q_pool,
+                k_pool,
+                q_max_pool,
+                k_max_pool,
+                maxpool_weight=maxpool_weight,
+            )
     route = _route_sm120_probability(
         probability,
         layout.anchors,
@@ -1092,7 +1197,8 @@ def sm120_ragged_h3_attention(
     )
     if profile_nvtx:
         torch.cuda.nvtx.range_pop()
-    del key_video, q_pool, k_pool, q_second, k_second, probability, route
+    del key_video, q_pool, k_pool, q_max_pool, k_max_pool
+    del q_second, k_second, probability, route
     _warmup_sync("Q128 mixed attention", q_bshd.device)
     del query_fp16, key_fp16, value_fp16, block_ids
     if profile_nvtx:
@@ -1129,9 +1235,11 @@ def execute_ragged_attention(
     fp16_ratio: float,
     prefix_kv_precision: str,
     prefix_query_precision: str,
+    maxpool_weight: float = 0.0,
     nvfp4_scales: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    smooth_k: bool = False,
 ) -> torch.Tensor:
-    """Dispatch the stable Mean-routed configuration to the native backend."""
+    """Dispatch the stable routing configuration to the native backend."""
 
     capability = tuple(torch.cuda.get_device_capability(query.device))
     if capability == (12, 0):
@@ -1156,12 +1264,13 @@ def execute_ragged_attention(
             prefix_query_precision=prefix_query_precision,
             draftmap_proxy="mean",
             diag_jensen=False,
+            maxpool_weight=maxpool_weight,
             enable_anchors=False,
             nvfp4_scales=nvfp4_scales,
         )
     if capability == (8, 9):
-        if query_block_size != 64 or nvfp4_ratio != 0.0:
-            raise RuntimeError("SM89 supports Q64 INT8/FP16 only")
+        if query_block_size not in (64, 128) or nvfp4_ratio != 0.0:
+            raise RuntimeError("SM89 supports Q64/Q128 INT8/FP16 only")
         return sm89_ragged_h3_attention(
             query,
             key,
@@ -1171,9 +1280,12 @@ def execute_ragged_attention(
             retained_int8_ratio=int8_ratio,
             retained_fp16_ratio=fp16_ratio,
             video_shape=video_shape,
+            query_block_size=query_block_size,
             prefix_kv_precision=prefix_kv_precision,
             prefix_query_precision=prefix_query_precision,
+            smooth_k=smooth_k,
             diag_jensen=False,
+            maxpool_weight=maxpool_weight,
             enable_anchors=False,
         )
     raise RuntimeError("Anemoi attention requires SM89 or SM120")

@@ -993,9 +993,13 @@ template <bool Drain = true, bool WarpLocal = false>
 __device__ __forceinline__ void reload_d128_fq0_q(
     const HalfQKVSmem<128>& smem_q,
     const half* q16,
+#if MPA_MIDDLE_INT8 && !MPA_LOW4_NVFP4
+    uint32_t q_head_row,
+#else
     uint32_t batch_id,
     uint32_t head_id,
     uint32_t num_qo_heads,
+#endif
     uint32_t query_block,
     uint32_t qo_len) {
   constexpr uint32_t packs_per_row = 128 / kPackHalf;
@@ -1021,8 +1025,12 @@ __device__ __forceinline__ void reload_d128_fq0_q(
               compact_row % rows_per_warp;
     const uint32_t global_row = query_block * kCtaQ + local_row;
     const half* source =
+#if MPA_MIDDLE_INT8 && !MPA_LOW4_NVFP4
+        q16 + (q_head_row * qo_len + global_row) * 128 +
+#else
         q16 + ((batch_id * num_qo_heads + head_id) * qo_len + global_row) *
                   128 +
+#endif
         pack * kPackHalf;
     smem_q.load_128b_async<cp_async::SharedMemFillMode::kFillZero>(
         smem_q.get_permuted_offset(local_row, pack),
@@ -1080,8 +1088,13 @@ __device__ __forceinline__ void load_d128_fq0_scores(
 }
 
 template <uint32_t HeadDim, bool HasFp8, bool HasFp16, bool SmoothK>
+#if defined(MPA_MIN_BLOCKS_PER_SM)
+__global__ __launch_bounds__(
+    32 * (kCtaQ / kWarpQ) * (kCtaK / kWarpK), MPA_MIN_BLOCKS_PER_SM)
+#else
 __global__ __launch_bounds__(
     32 * (kCtaQ / kWarpQ) * (kCtaK / kWarpK))
+#endif
 void MPA_ATTENTION_KERNEL_ENTRY(
     int8_t* __restrict__ q8,
     int8_t* __restrict__ k8,
@@ -1148,9 +1161,30 @@ void MPA_ATTENTION_KERNEL_ENTRY(
   extern __shared__ int8_t smem[];
   uint32_t lane_id = get_lane_id();
   const uint32_t warp_id = get_warp_id();
+#if MPA_MIDDLE_INT8 && !MPA_LOW4_NVFP4
+  uint32_t batch_id;
+  uint32_t head_id;
+  if constexpr (HasFp16) {
+    // The scratch is consumed before any phase owns shared memory.  The
+    // volatile round trip prevents ptxas from extending entry CTA IDs across
+    // INT8 and substituting them for the FP16 boundary reads.
+    volatile uint32_t* int8_ids =
+        reinterpret_cast<volatile uint32_t*>(smem) +
+        2 * (warp_id * 32 + lane_id);
+    int8_ids[0] = blockIdx.z;
+    int8_ids[1] = blockIdx.y;
+    batch_id = int8_ids[0];
+    head_id = int8_ids[1];
+  } else {
+    batch_id = blockIdx.z;
+    head_id = blockIdx.y;
+  }
+  const uint32_t query_block = blockIdx.x;
+#else
   const uint32_t batch_id = blockIdx.z;
   const uint32_t query_block = blockIdx.x;
   const uint32_t head_id = blockIdx.y;
+#endif
   const uint32_t num_qo_heads = gridDim.y;
   const uint32_t kv_head = head_id / num_kv_groups;
   const uint32_t num_kv_heads = num_qo_heads / num_kv_groups;
@@ -1173,7 +1207,7 @@ void MPA_ATTENTION_KERNEL_ENTRY(
   const uint32_t low_iterations = HasFp8 ? fp8_count[metadata_row] : 0;
 #endif
   const uint32_t route_low_iterations = nv_iterations + low_iterations;
-#if MPA_THREE_PHASE || MPA_LOW4_NVFP4
+#if MPA_LOW4_NVFP4 || MPA_MIDDLE_INT8 || MPA_MIDDLE_MXFP8
   const uint32_t initial_high_iterations =
       HasFp16 && route_low_iterations == 0 ? fp16_count[metadata_row] : 0;
 #else
@@ -1335,6 +1369,75 @@ void MPA_ATTENTION_KERNEL_ENTRY(
 
 }  // namespace mpa::attention
 
+#if defined(MPA_K64_BLOCK_MODE)
+namespace {
+
+template <uint32_t HeadDim, bool HasFp8, bool HasFp16>
+__global__ void store_empty_k64_blocks(
+    half* __restrict__ output,
+    float* __restrict__ lse,
+    const int32_t* __restrict__ fp8_count,
+    const int32_t* __restrict__ fp16_count,
+#if MPA_THREE_PHASE
+    const int32_t* __restrict__ middle_count,
+#endif
+    uint32_t qo_len,
+    uint32_t kv_len,
+    uint32_t num_qo_heads) {
+  const uint32_t query_block = blockIdx.x;
+  const uint32_t metadata_row =
+      (blockIdx.z * num_qo_heads + blockIdx.y) * gridDim.x + query_block;
+#if MPA_DENSE_SEQUENTIAL
+  const uint32_t nv_iterations = 0;
+  const uint32_t low_iterations =
+      HasFp8 ? div_ceil(kv_len, mpa::attention::kCtaK) : 0;
+#elif MPA_THREE_PHASE
+  const uint32_t nv_iterations = HasFp8 ? fp8_count[metadata_row] : 0;
+  const uint32_t low_iterations = HasFp8 ? middle_count[metadata_row] : 0;
+#elif MPA_LOW4_NVFP4
+  const uint32_t nv_iterations = HasFp8 ? fp8_count[metadata_row] : 0;
+  const uint32_t low_iterations = 0;
+#else
+  const uint32_t nv_iterations = 0;
+  const uint32_t low_iterations = HasFp8 ? fp8_count[metadata_row] : 0;
+#endif
+  const uint32_t route_low_iterations = nv_iterations + low_iterations;
+#if MPA_LOW4_NVFP4 || MPA_MIDDLE_INT8 || MPA_MIDDLE_MXFP8
+  const uint32_t initial_high_iterations =
+      HasFp16 && route_low_iterations == 0 ? fp16_count[metadata_row] : 0;
+#else
+  const uint32_t initial_high_iterations =
+      HasFp16 ? fp16_count[metadata_row] : 0;
+#endif
+  if (route_low_iterations != 0 || initial_high_iterations != 0) {
+    return;
+  }
+
+  const uint32_t query_begin = query_block * mpa::attention::kCtaQ;
+  const uint32_t query_rows = query_begin < qo_len
+      ? min(mpa::attention::kCtaQ, qo_len - query_begin)
+      : 0;
+  constexpr uint32_t output_words_per_row =
+      HeadDim * sizeof(half) / sizeof(uint32_t);
+  uint32_t* output_words = reinterpret_cast<uint32_t*>(output);
+  const uint32_t output_row =
+      (blockIdx.z * num_qo_heads + blockIdx.y) * qo_len + query_begin;
+  const uint32_t output_word = output_row * output_words_per_row;
+  const uint32_t word_count = query_rows * output_words_per_row;
+  for (uint32_t word = threadIdx.x; word < word_count; word += blockDim.x) {
+    output_words[output_word + word] = 0;
+  }
+#if MPA_STORE_LSE
+  for (uint32_t row = threadIdx.x; row < query_rows; row += blockDim.x) {
+    lse[(blockIdx.z * num_qo_heads + blockIdx.y) * qo_len + query_begin + row] =
+        -__int_as_float(0x7f800000);
+  }
+#endif
+}
+
+}  // namespace
+#endif
+
 template <uint32_t HeadDim, bool HasFp8, bool HasFp16, bool SmoothK>
 void MPA_ATTENTION_LAUNCH_ENTRY(
     int8_t* q8,
@@ -1424,6 +1527,15 @@ void MPA_ATTENTION_LAUNCH_ENTRY(
 #endif
       qo_len, kv_len,
       padded_kv_len, num_qo_heads / num_kv_heads, softmax_scale);
+#if defined(MPA_K64_BLOCK_MODE)
+  store_empty_k64_blocks<HeadDim, HasFp8, HasFp16>
+      <<<grid, 256, 0, stream>>>(
+          output, lse, fp8_count, fp16_count,
+#if MPA_THREE_PHASE
+          middle_count,
+#endif
+          qo_len, kv_len, num_qo_heads);
+#endif
 }
 
 #undef MPA_ATTENTION_KERNEL_ENTRY
@@ -1431,3 +1543,4 @@ void MPA_ATTENTION_LAUNCH_ENTRY(
 #undef MPA_THREE_PHASE
 #undef MPA_DENSE_SEQUENTIAL
 #undef MPA_STORE_LSE
+#undef MPA_MIN_BLOCKS_PER_SM

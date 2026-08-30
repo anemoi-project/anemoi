@@ -188,6 +188,81 @@ class MiniMaxH3PhaseDispatchTests(unittest.TestCase):
         sm120.assert_not_called()
         sm89.assert_not_called()
 
+    def test_maxpool_routes_through_the_public_api(self) -> None:
+        attention = H3MPAAttention(
+            H3MPAConfig(
+                video_shape=(1, 1, 128),
+                prefix_tokens=64,
+                maxpool_weight=0.25,
+            )
+        )
+        q = torch.empty((192, 1, 128), dtype=torch.float16)
+
+        with (
+            patch.object(attention, "_validate_qkv"),
+            patch.object(adapter, "_can_use_direct_packed_views", return_value=False),
+            patch.object(adapter, "_device_capability", side_effect=AssertionError),
+            patch.object(
+                adapter, "anemoi_attention", return_value=q.unsqueeze(0)
+            ) as operation,
+            patch.object(adapter, "sm120_ragged_h3_attention") as sm120,
+        ):
+            attention.mpa(q, q, q, layer=25)
+
+        self.assertEqual(
+            operation.call_args.kwargs["sparse_config"].maxpool_weight, 0.25
+        )
+        sm120.assert_not_called()
+
+    def test_private_sm120_fallback_forwards_maxpool_weight(self) -> None:
+        attention = H3MPAAttention(
+            H3MPAConfig(
+                video_shape=(1, 1, 64),
+                prefix_tokens=64,
+                int8_ratio=0.0,
+                mxfp8_ratio=1.0,
+                maxpool_weight=0.25,
+            )
+        )
+        q = torch.empty((128, 1, 128), dtype=torch.float16)
+
+        with (
+            patch.object(attention, "_validate_qkv"),
+            patch.object(adapter, "_can_use_direct_packed_views", return_value=False),
+            patch.object(adapter, "_device_capability", return_value=(12, 0)),
+            patch.object(
+                adapter, "sm120_ragged_h3_attention", return_value=q.unsqueeze(0)
+            ) as operation,
+        ):
+            attention.mpa(q, q, q, layer=0)
+
+        self.assertEqual(operation.call_args.kwargs["maxpool_weight"], 0.25)
+
+    def test_private_sm89_fallback_forwards_maxpool_weight(self) -> None:
+        attention = H3MPAAttention(
+            H3MPAConfig(
+                video_shape=(1, 1, 64),
+                prefix_tokens=64,
+                fp8_ratio=0.8,
+                int8_ratio=0.0,
+                fp16_ratio=0.2,
+                maxpool_weight=0.25,
+            )
+        )
+        q = torch.empty((128, 1, 128), dtype=torch.float16)
+
+        with (
+            patch.object(attention, "_validate_qkv"),
+            patch.object(adapter, "_can_use_direct_packed_views", return_value=False),
+            patch.object(adapter, "_device_capability", return_value=(8, 9)),
+            patch.object(
+                adapter, "sm89_ragged_h3_attention", return_value=q.unsqueeze(0)
+            ) as operation,
+        ):
+            attention.mpa(q, q, q, layer=0)
+
+        self.assertEqual(operation.call_args.kwargs["maxpool_weight"], 0.25)
+
     def test_h3_nvfp4_routes_exact_model_calibration_through_public_api(self) -> None:
         attention = H3MPAAttention(
             H3MPAConfig(
@@ -316,6 +391,54 @@ class MiniMaxH3PhaseDispatchTests(unittest.TestCase):
         ]
         self.assertEqual(query_parameter.default, "auto")
 
+    def test_sm120_entry_maxpool_weight_defaults_to_zero(self) -> None:
+        parameter = inspect.signature(
+            native.sm120_ragged_h3_attention
+        ).parameters.get("maxpool_weight")
+
+        self.assertIsNotNone(parameter)
+        self.assertEqual(parameter.default, 0.0)
+
+    def test_sm120_entry_validates_maxpool_weight_before_launch(self) -> None:
+        q = Mock(
+            shape=(1, 128, 1, 128),
+            ndim=4,
+            dtype=torch.float16,
+            device=torch.device("cuda"),
+        )
+        q.size.side_effect = lambda dimension: q.shape[dimension]
+        cases = (
+            (True, {}, TypeError),
+            ("0.25", {}, TypeError),
+            (float("nan"), {}, ValueError),
+            (-0.01, {}, ValueError),
+            (1.01, {}, ValueError),
+            (0.25, {"diag_jensen": True}, ValueError),
+            (0.25, {"draftmap_proxy": "k_tail_r1"}, ValueError),
+            (0.25, {"draftmap_proxy": "k_tail_r2"}, ValueError),
+        )
+
+        with patch.object(torch.cuda, "get_device_capability", return_value=(12, 0)):
+            for value, fields, exception in cases:
+                with (
+                    self.subTest(value=value, fields=fields),
+                    self.assertRaisesRegex(exception, "maxpool_weight"),
+                ):
+                    native.sm120_ragged_h3_attention(
+                        q,
+                        q,
+                        q,
+                        prefix_tokens=64,
+                        sparsity_ratio=0.9,
+                        retained_nvfp4_ratio=0.0,
+                        retained_int8_ratio=1.0,
+                        retained_fp16_ratio=0.0,
+                        video_shape=(1, 1, 64),
+                        layer=0,
+                        maxpool_weight=value,
+                        **fields,
+                    )
+
     def test_sm89_entry_prefix_precision_defaults_to_auto(self) -> None:
         signature = inspect.signature(native.sm89_ragged_h3_attention)
 
@@ -370,10 +493,12 @@ class MiniMaxH3PhaseDispatchTests(unittest.TestCase):
     def test_sm89_prefix_int8_reuses_operands_and_overlaps_preparation(self) -> None:
         source = inspect.getsource(native.sm89_ragged_h3_attention)
 
-        self.assertEqual(source.count("prepare_k64_fp8_operands("), 1)
+        self.assertEqual(source.count("prepare_h3_sm89_int8_operands("), 1)
+        self.assertNotIn("prepare_k64_fp8_operands(", source)
         self.assertEqual(source.count("sm89_h3_materialize_route("), 1)
         self.assertIn("prepared_operands=prepared_operands", source)
         self.assertIn("prefix_int8=prefix_kv_int8", source)
+        self.assertIn("active_int8=ratios[0] > 0.0 or prefix_kv_int8", source)
         self.assertIn("fp16_prefix_blocks=0 if prefix_kv_int8 else prefix_blocks", source)
         self.assertIn("active_fp16=ratios[1] > 0.0 or not prefix_kv_int8", source)
         self.assertIn(
@@ -381,10 +506,17 @@ class MiniMaxH3PhaseDispatchTests(unittest.TestCase):
         )
         self.assertIn("prefix_stream.wait_stream(current_stream)", source)
         prefix_quant = source.index("prefix_q8, prefix_q_scale = prepare_prefix_q_int8(")
-        video_prepare = source.index("prepared_operands = prepare_k64_fp8_operands(")
+        video_prepare = source.index("prepare_h3_sm89_int8_operands(")
         prefix_launch = source.index("prefix_output = sm89_q64_prefix_int8_attention(")
         self.assertLess(prefix_quant, video_prepare)
         self.assertLess(video_prepare, prefix_launch)
+
+    def test_sm89_maxpool_is_fused_into_single_load_preparation(self) -> None:
+        source = inspect.getsource(native.sm89_ragged_h3_attention)
+
+        self.assertIn("has_maxpool=maxpool_weight != 0.0", source)
+        self.assertIn("sm89_h3_draft_probability(", source)
+        self.assertIn("elif maxpool_weight == 0.0", source)
 
     def test_sm120_profile_ranges_are_opt_in_and_cover_complete_components(self) -> None:
         signature = inspect.signature(native.sm120_ragged_h3_attention)
@@ -683,6 +815,8 @@ class MiniMaxH3PhaseDispatchTests(unittest.TestCase):
             packed_k,
             packed_v,
             *(f"prepared-{index}" for index in range(20)),
+            "donor-q-max",
+            "donor-k-max",
         )
 
         with (
@@ -704,6 +838,7 @@ class MiniMaxH3PhaseDispatchTests(unittest.TestCase):
                 query_block_size=128,
                 phases=("nvfp4", "int8", "fp16"),
                 has_prefix_query_int8=True,
+                has_maxpool=True,
                 global_scales=scales,
             )
 
@@ -717,6 +852,8 @@ class MiniMaxH3PhaseDispatchTests(unittest.TestCase):
                 prepared[11:17],
                 prepared[17:23],
                 prepared[23:25],
+                "donor-q-max",
+                "donor-k-max",
             ),
         )
         pool.assert_not_called()
@@ -724,7 +861,22 @@ class MiniMaxH3PhaseDispatchTests(unittest.TestCase):
         self.assertEqual(operation.call_args.kwargs["query_block_size"], 128)
         self.assertTrue(operation.call_args.kwargs["has_int8"])
         self.assertTrue(operation.call_args.kwargs["has_prefix_query_int8"])
+        self.assertTrue(operation.call_args.kwargs["has_maxpool"])
         self.assertEqual(operation.call_args.kwargs["global_scales"], scales)
+
+    def test_python_max_pool_ignores_negative_ragged_padding(self) -> None:
+        packed = -torch.arange(1, 1 + 4 * 4, dtype=torch.float16).view(
+            1, 1, 4, 4
+        )
+        counts = torch.tensor([[1, 2]], dtype=torch.int32)
+
+        maximum = native._pool_query(packed, counts, block=2, maximum=True)
+
+        expected = torch.tensor(
+            [[[[-1.0, -2.0, -3.0, -4.0], [-9.0, -10.0, -11.0, -12.0]]]],
+            dtype=torch.float16,
+        )
+        torch.testing.assert_close(maximum, expected)
 
     def test_phase_runner_consumes_donor_first_operands_without_rereading_packed(
         self,

@@ -1,5 +1,9 @@
 # Sparse Attention Configuration
 
+> **Scope:** This document describes the legacy/generic BF16 Draft Attention
+> configuration. For the stable native mixed-precision attention API, see
+> [Attention API](attention_api.md).
+
 Anemoi resolves sparse-attention configuration into an immutable matrix with one
 row per diffusion step and one column per model attention layer. A value of
 `0.0` selects dense attention for that cell. Values greater than zero select
@@ -65,6 +69,6 @@ against the loaded model before diffusion starts.
 ## Precision Scope
 
 This configuration object belongs to the generic BF16 Draft Attention backend.
-MiniMax-H3 MPA uses its validated layer budget and architecture-neutral
-pure-INT8 policy directly in `anemoi.models.minimax_h3.runner`; it does not
-consume this legacy JSON schema.
+MiniMax-H3 MPA uses its fixed 80% default, optional layer-band overrides, and
+architecture-neutral pure-INT8 policy directly in
+`anemoi.models.minimax_h3.runner`; it does not consume this legacy JSON schema.

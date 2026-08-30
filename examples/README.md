@@ -31,6 +31,6 @@ scripts/run_minimax_h3.sh \
   --mpa-config examples/minimax-h3/mpa-sm120-q64-int8.yaml
 ```
 
-The canonical and architecture-alias profiles use the frozen Mean20 route. The
-Q128 files are minimal overrides that inherit the same calibrated per-layer
-sparsity schedule from `SparseConfig`.
+The canonical and architecture-alias profiles use fixed 80% sparsity in every
+sparse layer. The Q128 files are minimal overrides that inherit the same empty
+layer-band schedule and global `sparsity_ratio=0.80` from `SparseConfig`.

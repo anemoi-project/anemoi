@@ -103,9 +103,10 @@ class Ragged2DPartitionTests(unittest.TestCase):
         )
         self.assertEqual(partition.counts, (126,) * 8)
         self.assertEqual(sum(partition.counts), 1008)
+        self.assertEqual(_partition_cost(partition.blocks, 42)[:2], (368.0, 40.0))
         self.assertEqual(
             self._blocks_sha256(partition.blocks),
-            "110c3cb43e9887edc77afaebfaac29feefc9232b9beea27711dc2ac64d71d06c",
+            "b63bf0e8091a0504cd92d1d8eff2e7f50830fee60d22a78876a521da242ebdd8",
         )
 
     def test_balanced_regular_layouts_remain_byte_identical(self) -> None:
@@ -124,6 +125,25 @@ class Ragged2DPartitionTests(unittest.TestCase):
                 )
                 self.assertEqual(_partition_cost(partition.blocks, width)[1], 0.0)
                 self.assertEqual(self._blocks_sha256(partition.blocks), expected_hash)
+
+    def test_compact_workload_perimeters(self) -> None:
+        expected = {
+            (17, 30, 64): 260.0,
+            (30, 52, 64): 832.0,
+            (30, 53, 64): 818.0,
+            (34, 60, 64): 1040.0,
+            (45, 80, 64): 1832.0,
+        }
+        for geometry, expected_perimeter in expected.items():
+            with self.subTest(geometry=geometry):
+                height, width, capacity = geometry
+                partition = make_ragged_2d_partition(
+                    height, width, capacity, include_adjacency=False
+                )
+                self.assertEqual(
+                    _partition_cost(partition.blocks, width)[0],
+                    expected_perimeter,
+                )
 
     def test_anchor_free_partition_omits_adjacency(self) -> None:
         partition = make_ragged_2d_partition(

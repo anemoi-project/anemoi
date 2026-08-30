@@ -9,6 +9,7 @@
 #include <cuda_fp4.h>
 #include <cuda_fp16.h>
 #include <cuda_fp8.h>
+#include <math_constants.h>
 
 #include <cmath>
 #include <cstdint>
@@ -242,7 +243,7 @@ __device__ __forceinline__ float subgroup_max(float value) {
   return __shfl_sync(0xffffffffU, value, 0, Group);
 }
 
-template <typename InputT, int QueryBlock>
+template <typename InputT, int QueryBlock, bool HasMaxPool>
 __global__ void prepare_h3_qk_microscaling_kernel(
     const InputT* __restrict__ query,
     const InputT* __restrict__ key,
@@ -253,6 +254,8 @@ __global__ void prepare_h3_qk_microscaling_kernel(
     const float* __restrict__ k_global_scale,
     half* __restrict__ q_pool,
     half* __restrict__ k_pool,
+    half* __restrict__ q_max_pool,
+    half* __restrict__ k_max_pool,
     half* __restrict__ packed_q,
     half* __restrict__ packed_k,
     uint8_t* __restrict__ q4,
@@ -334,6 +337,7 @@ __global__ void prepare_h3_qk_microscaling_kernel(
   const int64_t stride_token = is_query ? q_stride_token : k_stride_token;
   half* packed = is_query ? packed_q : packed_k;
   half* pool = is_query ? q_pool : k_pool;
+  half* max_pool = is_query ? q_max_pool : k_max_pool;
   uint8_t* nv_data = is_query ? q4 : k4;
   uint8_t* nv_scales = is_query ? q4_scale : k4_scale;
   uint8_t* mx_data = is_query ? q8 : k8;
@@ -351,6 +355,7 @@ __global__ void prepare_h3_qk_microscaling_kernel(
       ? prefix_query_capacity
       : (is_query ? video_physical_tokens : key_physical_tokens);
   float pool_sum = 0.0f;
+  float pool_max = -CUDART_INF_F;
   float int8_amax[2] = {-1.0f, -1.0f};
 
 #pragma unroll 1
@@ -369,6 +374,11 @@ __global__ void prepare_h3_qk_microscaling_kernel(
     }
     if (!is_prefix) {
       pool_sum += __half2float(narrowed);
+      if constexpr (HasMaxPool) {
+        if (token_valid) {
+          pool_max = fmaxf(pool_max, __half2float(narrowed));
+        }
+      }
     }
 
     const int64_t natural_row = is_prefix_query
@@ -502,6 +512,9 @@ __global__ void prepare_h3_qk_microscaling_kernel(
         channel;
     pool[pool_offset] = __float2half_rn(
         pool_sum / static_cast<float>(valid_count));
+    if constexpr (HasMaxPool) {
+      max_pool[pool_offset] = __float2half_rn(pool_max);
+    }
   }
 }
 
@@ -999,6 +1012,7 @@ H3SM120Prepared prepare_h3_sm120_operands(
     bool has_mxfp8,
     bool has_fp16,
     bool has_prefix_query_int8,
+    bool has_maxpool,
     std::optional<torch::Tensor> q_global_scale,
     std::optional<torch::Tensor> k_global_scale,
     std::optional<torch::Tensor> v_global_scale) {
@@ -1077,6 +1091,10 @@ H3SM120Prepared prepare_h3_sm120_operands(
   auto q_pool = torch::empty(
       {query.size(0), query.size(1), video_blocks, 128}, fp16_options);
   auto k_pool = torch::empty_like(q_pool);
+  auto q_max_pool = has_maxpool ? torch::empty_like(q_pool)
+                                : torch::empty({0}, fp16_options);
+  auto k_max_pool = has_maxpool ? torch::empty_like(q_pool)
+                                : torch::empty({0}, fp16_options);
   auto packed_q = torch::empty(
       {query.size(0), query.size(1), video_physical_tokens, 128},
       fp16_options);
@@ -1207,13 +1225,14 @@ H3SM120Prepared prepare_h3_sm120_operands(
       "H3 donor-first preparation grid exceeds CUDA limits");
   const cudaStream_t stream =
       at::cuda::getCurrentCUDAStream(query.get_device());
-  const auto launch = [&](auto query_block_tag, auto* input_tag) {
+  const auto launch = [&](auto query_block_tag, auto* input_tag, auto max_tag) {
     constexpr int QueryBlock = decltype(query_block_tag)::value;
     using InputT = std::remove_pointer_t<decltype(input_tag)>;
+    constexpr bool HasMaxPool = decltype(max_tag)::value;
     const dim3 qk_grid(
         static_cast<uint32_t>(qk_tasks),
         static_cast<uint32_t>(query.size(0)));
-    prepare_h3_qk_microscaling_kernel<InputT, QueryBlock><<<
+    prepare_h3_qk_microscaling_kernel<InputT, QueryBlock, HasMaxPool><<<
         qk_grid, 128, 0, stream>>>(
         reinterpret_cast<const InputT*>(query.data_ptr()),
         reinterpret_cast<const InputT*>(key.data_ptr()),
@@ -1224,6 +1243,12 @@ H3SM120Prepared prepare_h3_sm120_operands(
         k_scale,
         reinterpret_cast<half*>(q_pool.data_ptr<at::Half>()),
         reinterpret_cast<half*>(k_pool.data_ptr<at::Half>()),
+        HasMaxPool
+            ? reinterpret_cast<half*>(q_max_pool.data_ptr<at::Half>())
+            : nullptr,
+        HasMaxPool
+            ? reinterpret_cast<half*>(k_max_pool.data_ptr<at::Half>())
+            : nullptr,
         reinterpret_cast<half*>(packed_q.data_ptr<at::Half>()),
         reinterpret_cast<half*>(packed_k.data_ptr<at::Half>()),
         has_nvfp4 ? q4.data_ptr<uint8_t>() : nullptr,
@@ -1302,9 +1327,17 @@ H3SM120Prepared prepare_h3_sm120_operands(
   };
   const auto dispatch_input = [&](auto* input_tag) {
     if (query_block_size == 64) {
-      launch(std::integral_constant<int, 64>{}, input_tag);
+      if (has_maxpool) {
+        launch(std::integral_constant<int, 64>{}, input_tag, std::true_type{});
+      } else {
+        launch(std::integral_constant<int, 64>{}, input_tag, std::false_type{});
+      }
     } else {
-      launch(std::integral_constant<int, 128>{}, input_tag);
+      if (has_maxpool) {
+        launch(std::integral_constant<int, 128>{}, input_tag, std::true_type{});
+      } else {
+        launch(std::integral_constant<int, 128>{}, input_tag, std::false_type{});
+      }
     }
   };
   if (query.scalar_type() == at::ScalarType::Half) {
@@ -1318,5 +1351,5 @@ H3SM120Prepared prepare_h3_sm120_operands(
       q4, q4_scale, k4, k4_scale, v4, v4_scale,
       q8, q8_scale, k8, k8_scale, v8, v8_scale,
       q_int8, q_int8_scale, k_int8, k_int8_scale, v_int8, v_int8_scale,
-      prefix_q_int8, prefix_q_int8_scale};
+      prefix_q_int8, prefix_q_int8_scale, q_max_pool, k_max_pool};
 }

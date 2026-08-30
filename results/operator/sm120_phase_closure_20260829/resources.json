@@ -1,0 +1,622 @@
+{
+  "accepted_runtime_cells": 21,
+  "artifacts": {
+    "baseline_build_log": {
+      "path": "/tmp/anemoi-sm120-phase-closure-baseline-build.log",
+      "sha256": "9a4bc3e9fa4f23a041e7ddc1faef8b92323acffefd59d078d929adca83a8a575"
+    },
+    "baseline_extension": {
+      "path": "/tmp/anemoi-sm120-phase-closure-baseline.so",
+      "sha256": "817fe2523fce0fcefd3cee07fc40454b155053e43fb68cacee4a041c4af42683"
+    },
+    "candidate_build_log": {
+      "path": "/tmp/anemoi-sm120-phase-closure-accepted-build.log",
+      "sha256": "87a71216396706672c507fdc075c26f80e5ed7dbf9abe29a823fa4876097feff"
+    },
+    "candidate_extension": {
+      "path": "/tmp/anemoi-sm120-phase-closure-accepted.so",
+      "sha256": "08ae61320b5788b807efab5e4a13afac61d04aa54f777f85f782662c9b3755bc"
+    },
+    "generated_sass_gate": {
+      "path": "/tmp/anemoi-sm120-phase-closure-accepted-gate.json",
+      "sha256": "e959fd7a0bb1dda744c1ecceb63c9c389108656c26d3c98f0eea80ec9500b7f1"
+    }
+  },
+  "compiled_native_symbols": 22,
+  "date": "2026-08-30",
+  "hardware": "NVIDIA GeForce RTX 5090 (SM120)",
+  "phase_boundary_sass": {
+    "q128_int8_fp16": {
+      "ctaid_y_reads_before_fp16_q": 2,
+      "ctaid_z_reads_before_fp16_q": 2
+    },
+    "q64_int8_fp16": {
+      "ctaid_y_reads_before_fp16_q": 2,
+      "ctaid_z_reads_before_fp16_q": 2
+    }
+  },
+  "records": {
+    "q128_fp16": {
+      "accepted": true,
+      "active_ctas_per_sm": 2,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 255,
+        "spill_load_bytes": 12,
+        "spill_store_bytes": 12,
+        "stack_frame_bytes": 16
+      },
+      "candidate": {
+        "registers": 255,
+        "spill_load_bytes": 12,
+        "spill_store_bytes": 12,
+        "stack_frame_bytes": 16
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 49152,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention38mixed_attention_sm120_q128_fp16_kernelILj128ELb0ELb1ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PhS8_S8_PKiPfjjjjjf"
+    },
+    "q128_int8": {
+      "accepted": true,
+      "active_ctas_per_sm": 2,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 255,
+        "spill_load_bytes": 8,
+        "spill_store_bytes": 8,
+        "stack_frame_bytes": 8
+      },
+      "candidate": {
+        "registers": 255,
+        "spill_load_bytes": 8,
+        "spill_store_bytes": 8,
+        "stack_frame_bytes": 8
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 33280,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention38mixed_attention_sm120_q128_int8_kernelILj128ELb1ELb0ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PfS8_S8_PKiS8_jjjjjf"
+    },
+    "q128_int8_fp16": {
+      "accepted": true,
+      "active_ctas_per_sm": 2,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 255,
+        "spill_load_bytes": 80,
+        "spill_store_bytes": 96,
+        "stack_frame_bytes": 40
+      },
+      "candidate": {
+        "registers": 255,
+        "spill_load_bytes": 56,
+        "spill_store_bytes": 40,
+        "stack_frame_bytes": 32
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": -24,
+        "spill_store_bytes": -56,
+        "stack_frame_bytes": -8
+      },
+      "dynamic_shared_memory_bytes": 49152,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention38mixed_attention_sm120_q128_int8_kernelILj128ELb1ELb1ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PfS8_S8_PKiS8_jjjjjf"
+    },
+    "q128_mxfp8": {
+      "accepted": true,
+      "active_ctas_per_sm": 2,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 254,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "candidate": {
+        "registers": 254,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 33280,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention39mixed_attention_sm120_q128_mxfp8_kernelILj128ELb1ELb0ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PhS8_S8_PKiPfjjjjjf"
+    },
+    "q128_mxfp8_fp16": {
+      "accepted": true,
+      "active_ctas_per_sm": 2,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 255,
+        "spill_load_bytes": 68,
+        "spill_store_bytes": 92,
+        "stack_frame_bytes": 40
+      },
+      "candidate": {
+        "registers": 255,
+        "spill_load_bytes": 68,
+        "spill_store_bytes": 92,
+        "stack_frame_bytes": 40
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 49152,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention39mixed_attention_sm120_q128_mxfp8_kernelILj128ELb1ELb1ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PhS8_S8_PKiPfjjjjjf"
+    },
+    "q128_nvfp4": {
+      "accepted": true,
+      "active_ctas_per_sm": 2,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 255,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "candidate": {
+        "registers": 255,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 33280,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention39mixed_attention_sm120_q128_nvfp4_kernelILj128ELb1ELb0ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PhS8_S8_PKfSA_SA_PKiPfjjjjjf"
+    },
+    "q128_nvfp4_fp16": {
+      "accepted": true,
+      "active_ctas_per_sm": 2,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 255,
+        "spill_load_bytes": 48,
+        "spill_store_bytes": 72,
+        "stack_frame_bytes": 24
+      },
+      "candidate": {
+        "registers": 255,
+        "spill_load_bytes": 48,
+        "spill_store_bytes": 72,
+        "stack_frame_bytes": 24
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 49152,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention39mixed_attention_sm120_q128_nvfp4_kernelILj128ELb1ELb1ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PhS8_S8_PKfSA_SA_PKiPfjjjjjf"
+    },
+    "q128_nvfp4_int8": {
+      "accepted": true,
+      "active_ctas_per_sm": 2,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 255,
+        "spill_load_bytes": 16,
+        "spill_store_bytes": 20,
+        "stack_frame_bytes": 16
+      },
+      "candidate": {
+        "registers": 255,
+        "spill_load_bytes": 16,
+        "spill_store_bytes": 20,
+        "stack_frame_bytes": 16
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 33280,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention46mixed_attention_sm120_q128_nv_int8_fp16_kernelILj128ELb1ELb0ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PfS8_S8_S2_S2_S4_PhS9_S9_S7_PKfSB_SB_PKiS8_jjjjjf"
+    },
+    "q128_nvfp4_int8_fp16": {
+      "accepted": true,
+      "active_ctas_per_sm": 2,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 255,
+        "spill_load_bytes": 8,
+        "spill_store_bytes": 8,
+        "stack_frame_bytes": 8
+      },
+      "candidate": {
+        "registers": 255,
+        "spill_load_bytes": 8,
+        "spill_store_bytes": 8,
+        "stack_frame_bytes": 8
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 49152,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention46mixed_attention_sm120_q128_nv_int8_fp16_kernelILj128ELb1ELb1ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PfS8_S8_S2_S2_S4_PhS9_S9_S7_PKfSB_SB_PKiS8_jjjjjf"
+    },
+    "q128_nvfp4_mxfp8": {
+      "accepted": true,
+      "active_ctas_per_sm": 2,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 255,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "candidate": {
+        "registers": 255,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 33280,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention44mixed_attention_sm120_q128_nv_mx_fp16_kernelILj128ELb1ELb0ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PhS8_S8_S2_S2_S4_S8_S8_S8_S7_PKfSA_SA_PKiPfjjjjjf"
+    },
+    "q128_nvfp4_mxfp8_fp16": {
+      "accepted": true,
+      "active_ctas_per_sm": 2,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 255,
+        "spill_load_bytes": 76,
+        "spill_store_bytes": 92,
+        "stack_frame_bytes": 32
+      },
+      "candidate": {
+        "registers": 255,
+        "spill_load_bytes": 76,
+        "spill_store_bytes": 92,
+        "stack_frame_bytes": 32
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 49152,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention44mixed_attention_sm120_q128_nv_mx_fp16_kernelILj128ELb1ELb1ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PhS8_S8_S2_S2_S4_S8_S8_S8_S7_PKfSA_SA_PKiPfjjjjjf"
+    },
+    "q64_fp16": {
+      "accepted": true,
+      "active_ctas_per_sm": 3,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 168,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "candidate": {
+        "registers": 168,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 32768,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention32mixed_attention_sm120_q64_kernelILj128ELb0ELb1ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PhS8_S8_PKiPfjjjjjf"
+    },
+    "q64_int8": {
+      "accepted": true,
+      "active_ctas_per_sm": 3,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 168,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "candidate": {
+        "registers": 168,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 25088,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention37mixed_attention_sm120_q64_int8_kernelILj128ELb1ELb0ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PfS8_S8_PKiS8_jjjjjf"
+    },
+    "q64_int8_fp16": {
+      "accepted": true,
+      "active_ctas_per_sm": 3,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 168,
+        "spill_load_bytes": 32,
+        "spill_store_bytes": 36,
+        "stack_frame_bytes": 24
+      },
+      "candidate": {
+        "registers": 168,
+        "spill_load_bytes": 16,
+        "spill_store_bytes": 32,
+        "stack_frame_bytes": 16
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": -16,
+        "spill_store_bytes": -4,
+        "stack_frame_bytes": -8
+      },
+      "dynamic_shared_memory_bytes": 32768,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention42mixed_attention_sm120_q64_int8_fp16_kernelILj128ELb1ELb1ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PfS8_S8_PKiS8_jjjjjf"
+    },
+    "q64_mxfp8": {
+      "accepted": true,
+      "active_ctas_per_sm": 3,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 166,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "candidate": {
+        "registers": 166,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 25088,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention32mixed_attention_sm120_q64_kernelILj128ELb1ELb0ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PhS8_S8_PKiPfjjjjjf"
+    },
+    "q64_mxfp8_fp16": {
+      "accepted": true,
+      "active_ctas_per_sm": 3,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 168,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "candidate": {
+        "registers": 168,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 32768,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention32mixed_attention_sm120_q64_kernelILj128ELb1ELb1ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PhS8_S8_PKiPfjjjjjf"
+    },
+    "q64_nvfp4": {
+      "accepted": true,
+      "active_ctas_per_sm": 3,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 167,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "candidate": {
+        "registers": 167,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 25088,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention38mixed_attention_sm120_q64_nvfp4_kernelILj128ELb1ELb0ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PhS8_S8_PKfSA_SA_PKiPfjjjjjf"
+    },
+    "q64_nvfp4_fp16": {
+      "accepted": true,
+      "active_ctas_per_sm": 3,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 168,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "candidate": {
+        "registers": 168,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 32768,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention38mixed_attention_sm120_q64_nvfp4_kernelILj128ELb1ELb1ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PhS8_S8_PKfSA_SA_PKiPfjjjjjf"
+    },
+    "q64_nvfp4_int8": {
+      "accepted": true,
+      "active_ctas_per_sm": 3,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 168,
+        "spill_load_bytes": 16,
+        "spill_store_bytes": 8,
+        "stack_frame_bytes": 8
+      },
+      "candidate": {
+        "registers": 168,
+        "spill_load_bytes": 16,
+        "spill_store_bytes": 8,
+        "stack_frame_bytes": 8
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 25088,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention45mixed_attention_sm120_q64_nv_int8_fp16_kernelILj128ELb1ELb0ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PfS8_S8_S2_S2_S4_PhS9_S9_S7_PKfSB_SB_PKiS8_jjjjjf"
+    },
+    "q64_nvfp4_int8_fp16": {
+      "accepted": true,
+      "active_ctas_per_sm": 3,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 168,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "candidate": {
+        "registers": 168,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 32768,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention45mixed_attention_sm120_q64_nv_int8_fp16_kernelILj128ELb1ELb1ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PfS8_S8_S2_S2_S4_PhS9_S9_S7_PKfSB_SB_PKiS8_jjjjjf"
+    },
+    "q64_nvfp4_mxfp8": {
+      "accepted": true,
+      "active_ctas_per_sm": 3,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 168,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "candidate": {
+        "registers": 168,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 25088,
+      "runtime_accepted": false,
+      "symbol": "_ZN3mpa9attention43mixed_attention_sm120_q64_nv_mx_fp16_kernelILj128ELb1ELb0ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PhS8_S8_S2_S2_S4_S8_S8_S8_S7_PKfSA_SA_PKiPfjjjjjf"
+    },
+    "q64_nvfp4_mxfp8_fp16": {
+      "accepted": true,
+      "active_ctas_per_sm": 3,
+      "arch": "sm_120a",
+      "baseline": {
+        "registers": 168,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "candidate": {
+        "registers": 168,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "delta": {
+        "registers": 0,
+        "spill_load_bytes": 0,
+        "spill_store_bytes": 0,
+        "stack_frame_bytes": 0
+      },
+      "dynamic_shared_memory_bytes": 32768,
+      "runtime_accepted": true,
+      "symbol": "_ZN3mpa9attention43mixed_attention_sm120_q64_nv_mx_fp16_kernelILj128ELb1ELb1ELb0EEEvPaS2_P13__nv_fp8_e4m3P6__halfS6_S6_S6_S6_PiS7_S7_S7_PhS8_S8_S2_S2_S4_S8_S8_S8_S7_PKfSA_SA_PKiPfjjjjjf"
+    }
+  },
+  "schema": "anemoi.diagnostic.sm120_phase_resources.v2",
+  "source": {
+    "baseline_commit": "5542126",
+    "candidate_commit": "4b314683569ddd5987923224faf45541c6e6c2df"
+  },
+  "status": "validated",
+  "toolchain": {
+    "architecture": "sm_120a",
+    "cuda": "13.1"
+  }
+}

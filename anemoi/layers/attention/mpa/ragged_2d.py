@@ -1,17 +1,18 @@
-"""Request-static stripe-DP partitioning for ragged 2-D attention.
+"""Request-static compact partitioning for ragged 2-D attention.
 
 The production partition covers an arbitrary positive ``height x width`` grid
 with exactly ``ceil(height * width / capacity)`` connected blocks. Every block
 contains one of the two globally balanced real-token counts and no padding
 token becomes part of the logical partition.
 
-The dynamic program considers complete row bands in both orientations.  A
-band is walked column-wise in a serpentine order and split into connected
-intervals of the globally required sizes.  The winning exact-block-count
-partition minimizes, in order, discrete perimeter, bounding-box waste,
-spatial moment, and square aspect error.  Partition construction is host-only
-and cached per request geometry; every request still executes the same
-physical K64 CUDA kernel.
+The compact candidate first groups blocks into near-square ragged bands, then
+walks every band on the perpendicular axis.  Its one-cell seams absorb the
+global ``q``/``q+1`` mass constraint without stretching complete blocks across
+an entire stripe.  A legacy full-band candidate remains in the search set, so
+the selected exact cover can never regress its lexicographic shape objective:
+discrete perimeter, bounding-box waste, spatial moment, then square aspect
+error.  Construction is host-only and cached per request geometry; every
+request still executes the same physical CUDA kernel.
 """
 
 from __future__ import annotations
@@ -225,6 +226,201 @@ def _transpose_to_raster(
     )
 
 
+def _balanced_binary_patterns(length: int, ones: int) -> tuple[tuple[int, ...], ...]:
+    """Return a small deterministic set of balanced zero/one arrangements."""
+
+    if not 0 <= ones <= length:
+        raise ValueError("ones must be within the binary-pattern length")
+    if ones == 0:
+        return ((0,) * length,)
+    if ones == length:
+        return ((1,) * length,)
+
+    even = tuple(
+        (index + 1) * ones // length - index * ones // length
+        for index in range(length)
+    )
+    patterns = {
+        (1,) * ones + (0,) * (length - ones),
+        (0,) * (length - ones) + (1,) * ones,
+        even,
+        tuple(reversed(even)),
+    }
+    # Keeping this set constant-sized bounds host construction independently
+    # of the number of CUDA blocks while covering clustered and even seams.
+    return tuple(sorted(patterns))
+
+
+def _block_is_connected(block: tuple[int, ...], width: int) -> bool:
+    """Return whether raster tokens form one four-connected component."""
+
+    remaining = set(block)
+    frontier = [remaining.pop()]
+    while frontier:
+        token = frontier.pop()
+        row, column = divmod(token, width)
+        neighbors = []
+        if row:
+            neighbors.append(token - width)
+        if column:
+            neighbors.append(token - 1)
+        if column + 1 < width:
+            neighbors.append(token + 1)
+        neighbors.append(token + width)
+        for neighbor in neighbors:
+            if neighbor in remaining:
+                remaining.remove(neighbor)
+                frontier.append(neighbor)
+    return not remaining
+
+
+def _nested_serpentine_blocks(
+    height: int,
+    width: int,
+    sizes: tuple[int, ...],
+    band_block_counts: tuple[int, ...],
+) -> tuple[tuple[int, ...], ...] | None:
+    """Split ragged horizontal bands by their perpendicular compact walks."""
+
+    outer_path = tuple(
+        row * width + column
+        for row in range(height)
+        for column in (
+            range(width) if row % 2 == 0 else range(width - 1, -1, -1)
+        )
+    )
+    blocks: list[tuple[int, ...]] = []
+    token_offset = 0
+    block_offset = 0
+    for band_blocks in band_block_counts:
+        band_sizes = sizes[block_offset : block_offset + band_blocks]
+        band_tokens = sum(band_sizes)
+        band_cells = set(outer_path[token_offset : token_offset + band_tokens])
+        rows_by_column: list[list[int]] = [[] for _ in range(width)]
+        for token in band_cells:
+            row, column = divmod(token, width)
+            rows_by_column[column].append(row)
+        for rows in rows_by_column:
+            rows.sort()
+        best_band: tuple[
+            _Cost,
+            bool,
+            int,
+            tuple[tuple[int, ...], ...],
+        ] | None = None
+        for reverse_columns in (False, True):
+            columns = (
+                range(width - 1, -1, -1) if reverse_columns else range(width)
+            )
+            for phase in (0, 1):
+                inner_path = tuple(
+                    row * width + column
+                    for column_index, column in enumerate(columns)
+                    for row in (
+                        rows_by_column[column]
+                        if (column_index + phase) % 2 == 0
+                        else reversed(rows_by_column[column])
+                    )
+                )
+                trial: list[tuple[int, ...]] = []
+                offset = 0
+                for size in band_sizes:
+                    block = inner_path[offset : offset + size]
+                    if not _block_is_connected(block, width):
+                        break
+                    trial.append(block)
+                    offset += size
+                if len(trial) != band_blocks:
+                    continue
+                trial_blocks = tuple(trial)
+                candidate = (
+                    _partition_cost(trial_blocks, width),
+                    reverse_columns,
+                    phase,
+                    trial_blocks,
+                )
+                if best_band is None or candidate < best_band:
+                    best_band = candidate
+        if best_band is None:
+            return None
+        blocks.extend(best_band[3])
+        token_offset += band_tokens
+        block_offset += band_blocks
+
+    if token_offset != height * width or block_offset != len(sizes):
+        raise RuntimeError("compact band construction did not consume the exact grid")
+    return tuple(blocks)
+
+
+def _compact_candidate(
+    height: int,
+    width: int,
+    capacity: int,
+    target_blocks: int,
+) -> tuple[tuple[int, ...], ...] | None:
+    """Return the best lower-bound-guided two-level compact candidate."""
+
+    small_size, large_blocks = divmod(height * width, target_blocks)
+    if small_size + bool(large_blocks) > capacity:
+        raise RuntimeError("balanced block size exceeds physical capacity")
+
+    best: tuple[
+        _Cost,
+        bool,
+        int,
+        tuple[int, ...],
+        tuple[int, ...],
+        tuple[tuple[int, ...], ...],
+    ] | None = None
+    for transposed in (False, True):
+        oriented_height, oriented_width = (
+            (width, height) if transposed else (height, width)
+        )
+        ideal_bands = math.sqrt(
+            target_blocks * oriented_height / oriented_width
+        )
+        band_counts = {
+            max(1, min(oriented_height, target_blocks, math.floor(ideal_bands))),
+            max(1, min(oriented_height, target_blocks, math.ceil(ideal_bands))),
+        }
+        for band_count in sorted(band_counts):
+            small_band, large_bands = divmod(target_blocks, band_count)
+            for band_pattern in _balanced_binary_patterns(
+                band_count, large_bands
+            ):
+                band_block_counts = tuple(
+                    small_band + bit for bit in band_pattern
+                )
+                for size_pattern in _balanced_binary_patterns(
+                    target_blocks, large_blocks
+                ):
+                    sizes = tuple(small_size + bit for bit in size_pattern)
+                    oriented_blocks = _nested_serpentine_blocks(
+                        oriented_height,
+                        oriented_width,
+                        sizes,
+                        band_block_counts,
+                    )
+                    if oriented_blocks is None:
+                        continue
+                    blocks = (
+                        _transpose_to_raster(oriented_blocks, height, width)
+                        if transposed
+                        else oriented_blocks
+                    )
+                    candidate = (
+                        _partition_cost(blocks, width),
+                        transposed,
+                        band_count,
+                        band_block_counts,
+                        sizes,
+                        blocks,
+                    )
+                    if best is None or candidate < best:
+                        best = candidate
+    return None if best is None else best[5]
+
+
 def _partition_adjacency(
     height: int,
     width: int,
@@ -257,7 +453,7 @@ def make_ragged_2d_partition(
     *,
     include_adjacency: bool = True,
 ) -> Ragged2DPartition:
-    """Return the frozen stripe-compact partition for an arbitrary grid."""
+    """Return the frozen compact partition for an arbitrary grid."""
 
     if any(type(value) is not int or value <= 0 for value in (height, width)):
         raise ValueError("height and width must be positive integers")
@@ -279,11 +475,22 @@ def make_ragged_2d_partition(
         vertical_blocks = _transpose_to_raster(transposed_blocks, height, width)
         # Score in the original coordinate system.  The Boolean makes exact
         # ties deterministic and favors the ordinary construction.
-        selected = (
+        stripe_selected = (
             horizontal_blocks
             if (_partition_cost(horizontal_blocks, width), False)
             <= (_partition_cost(vertical_blocks, width), True)
             else vertical_blocks
+        )
+        compact = _compact_candidate(height, width, capacity, block_count)
+        # Keep the proven full-band construction as a fallback and as the
+        # deterministic winner of exact ties.  The new search therefore only
+        # changes layouts when it improves the complete shape objective.
+        selected = (
+            compact
+            if compact is not None
+            and _partition_cost(compact, width)
+            < _partition_cost(stripe_selected, width)
+            else stripe_selected
         )
     # Serpentine order proves connectivity; canonical raster order makes
     # rectangular blocks byte-equivalent to the historical aligned layout.

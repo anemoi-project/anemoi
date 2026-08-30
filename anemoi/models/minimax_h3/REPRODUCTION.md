@@ -208,27 +208,29 @@ Copy the file before changing an experiment:
 
 ```bash
 cp examples/minimax-h3/mpa-ragged2d-mixed.yaml \
-  .codex_tmp/my-mpa-config.yaml
+  /tmp/my-mpa-config.yaml
 
 scripts/run_minimax_h3.sh \
   mpa-ragged2d-mixed \
   outputs/minimax-h3/mpa-custom \
-  --mpa-config .codex_tmp/my-mpa-config.yaml
+  --mpa-config /tmp/my-mpa-config.yaml
 ```
 
 The stable YAML controls query geometry, base and per-layer sparsity,
-retained-block precision, and dense-first steps/layers. It uses the same field
-set as `SparseConfig` and `QuantConfig`, plus the H3 adapter's dense schedule.
-Unknown fields and invalid ranges are rejected.
+retained-block precision, optional SM89/SM120 Mean/MaxPool routing fusion, and
+dense-first steps/layers. It uses the same field set as `SparseConfig` and
+`QuantConfig`, plus the H3 adapter's dense schedule. Unknown fields and invalid
+ranges are rejected.
 
 The fields have the following meanings:
 
 | Field | Meaning |
 | --- | --- |
-| `query_block_size` | Logical query block size, either `64` or `128`. Q128 selects the SM120 path and is rejected on SM89. |
+| `query_block_size` | Logical query block size, either `64` or `128`. Both sizes are supported by the SM89 and SM120 native paths. |
 | `prefix_kv_precision`, `prefix_query_precision` | Prefix K/V and prefix-query arithmetic precision. The production value is `int8` on both SM89 and SM120. Unsupported architecture/precision combinations are rejected before kernel launch. |
-| `sparsity_ratio` | Fraction of routed video block pairs dropped outside `layer_sparsity_bands`. The frozen base is `0.80`. |
-| `layer_sparsity_bands` | Zero-based, half-open per-layer overrides. The canonical file inherits the calibrated L2–L49 Mean20 schedule from `SparseConfig`; its average sparse-layer sparsity is exactly `0.80` (20% keep). |
+| `sparsity_ratio` | Fraction of routed video block pairs dropped outside `layer_sparsity_bands`. The frozen default is `0.80` for every sparse layer. |
+| `layer_sparsity_bands` | Zero-based, half-open per-layer overrides. The canonical file inherits the empty default `()` from `SparseConfig`, so no layer changes the global 80% sparsity unless bands are supplied explicitly. |
+| `maxpool_weight` | SM89/SM120 Q64/Q128 Mean/MaxPool routing blend in `[0, 1]`. The default `0` preserves mean-only routing; `1` is max-only; interior values fuse independently normalized mean and max probability maps. |
 | `nvfp4_ratio`, `int8_ratio`, `fp16_ratio` | Stable retained-block precision fractions. They must be finite, nonnegative, and sum to one. The production value is pure INT8. SM89 accepts only INT8/FP16; NVFP4 requires SM120. |
 | `dense_first_steps` | Number of initial denoising steps that use original-dtype dense SDPA for every transformer layer. The released value is 10. |
 | `dense_first_layers` | Number of leading transformer layers that remain dense at every denoising step. With value 2, zero-based layers 0 and 1 remain dense after the initial dense-only steps. |

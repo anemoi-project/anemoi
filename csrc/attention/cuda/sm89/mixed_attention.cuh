@@ -157,6 +157,33 @@ __device__ __forceinline__ void leave_fp8_probability_and_v_domains(
   }
 }
 
+// Give ptxas an explicit register-to-register ownership boundary between the
+// ordered INT8 and FP16 phases.  The self moves preserve the online-softmax
+// state exactly while creating fresh definitions after every INT8-local value
+// has died.  Unlike a device call or a memory-backed handoff, this keeps the
+// only cross-phase payload (ro/m/d) in registers.
+template <uint32_t NumTilesQ, uint32_t NumTilesV>
+__device__ __forceinline__ void handoff_online_softmax_registers(
+    float (&ro)[NumTilesQ][NumTilesV][8],
+    float (&m)[NumTilesQ][2],
+    float (&d)[NumTilesQ][2]) {
+#pragma unroll
+  for (uint32_t fq = 0; fq < NumTilesQ; ++fq) {
+#pragma unroll
+    for (uint32_t fv = 0; fv < NumTilesV; ++fv) {
+#pragma unroll
+      for (uint32_t element = 0; element < 8; ++element) {
+        asm volatile("mov.f32 %0, %0;" : "+f"(ro[fq][fv][element]));
+      }
+    }
+#pragma unroll
+    for (uint32_t row = 0; row < 2; ++row) {
+      asm volatile("mov.f32 %0, %0;" : "+f"(m[fq][row]));
+      asm volatile("mov.f32 %0, %0;" : "+f"(d[fq][row]));
+    }
+  }
+}
+
 template <uint32_t NumTilesQ, uint32_t NumTilesV>
 __device__ __forceinline__ void normalize_d_inplace(
     float ro[][NumTilesV][8],
@@ -485,98 +512,13 @@ __device__ __forceinline__ void compute_fp8_sv_stage_tilewise(
   }
 }
 
-// D128 uses the already-consumed fq=0 half of each warp's Q shared-memory
-// slice as a transient 16-KiB score stash.  Only those 64 Q rows need to be
-// restored before a later FP16 physical stage; fq=1 remains resident.
-template <bool Drain = true>
-__device__ __forceinline__ void reload_d128_fq0_q(
-    const HalfQKVSmem<128>& smem_q,
-    const half* q16,
-    uint32_t batch_id,
-    uint32_t head_id,
-    uint32_t num_qo_heads,
-    uint32_t query_block,
-    uint32_t qo_len) {
-  constexpr uint32_t packs_per_row = 128 / kPackHalf;
-  constexpr uint32_t rows_per_warp = kWarpQ / 2;
-  constexpr uint32_t compact_rows =
-      (kCtaQ / kWarpQ) * rows_per_warp;
-  constexpr uint32_t total_packs = compact_rows * packs_per_row;
-  constexpr uint32_t cta_threads =
-      32 * (kCtaQ / kWarpQ) * (kCtaK / kWarpK);
-  const uint32_t linear_thread = get_warp_id() * 32 + get_lane_id();
-
-#pragma unroll 1
-  for (uint32_t copy = 0; copy < total_packs / cta_threads; ++copy) {
-    const uint32_t compact_index = linear_thread + copy * cta_threads;
-    const uint32_t compact_row = compact_index / packs_per_row;
-    const uint32_t pack = compact_index % packs_per_row;
-    const uint32_t local_row =
-        (compact_row / rows_per_warp) * kWarpQ +
-        compact_row % rows_per_warp;
-    const uint32_t global_row = query_block * kCtaQ + local_row;
-    const half* source =
-        q16 + ((batch_id * num_qo_heads + head_id) * qo_len + global_row) *
-                  128 +
-        pack * kPackHalf;
-    smem_q.load_128b_async<cp_async::SharedMemFillMode::kFillZero>(
-        smem_q.get_permuted_offset(local_row, pack),
-        source,
-        global_row < qo_len);
-  }
-  cp_async::commit_group();
-  if constexpr (Drain) {
-    cp_async::wait_group<0>();
-    __syncthreads();
-  }
-}
-
-template <uint32_t NumTilesK>
-__device__ __forceinline__ void stash_d128_fq0_scores(
-    int8_t* smem,
-    float scores[][NumTilesK][8]) {
-  constexpr uint32_t score_values = NumTilesK * 8;
-  constexpr uint32_t score_packs = score_values / 4;
-  constexpr uint32_t warp_lanes = 32;
-  constexpr uint32_t q_slice_values =
-      kWarpQ * 128 * sizeof(half) / sizeof(float);
-  constexpr uint32_t q_slice_packs = q_slice_values / 4;
-  static_assert(score_packs * warp_lanes <= q_slice_packs);
-  float4* warp_slots = reinterpret_cast<float4*>(smem) +
-      get_warp_id() * q_slice_packs;
-  const float4* score_frag = reinterpret_cast<float4*>(scores[0][0]);
-#pragma unroll
-  for (uint32_t pack = 0; pack < score_packs; ++pack) {
-    // Keep the 16-byte vector access, but make lanes adjacent within each
-    // pack.  A lane-major score array strides every lane by 128 bytes and
-    // maps the entire warp to the same four shared-memory banks.
-    warp_slots[pack * warp_lanes + get_lane_id()] = score_frag[pack];
-  }
-}
-
-template <uint32_t NumTilesK>
-__device__ __forceinline__ void load_d128_fq0_scores(
-    const int8_t* smem,
-    float scores[][NumTilesK][8]) {
-  constexpr uint32_t score_values = NumTilesK * 8;
-  constexpr uint32_t score_packs = score_values / 4;
-  constexpr uint32_t warp_lanes = 32;
-  constexpr uint32_t q_slice_values =
-      kWarpQ * 128 * sizeof(half) / sizeof(float);
-  constexpr uint32_t q_slice_packs = q_slice_values / 4;
-  static_assert(score_packs * warp_lanes <= q_slice_packs);
-  const float4* warp_slots = reinterpret_cast<const float4*>(smem) +
-      get_warp_id() * q_slice_packs;
-  float4* score_frag = reinterpret_cast<float4*>(scores[0][0]);
-#pragma unroll
-  for (uint32_t pack = 0; pack < score_packs; ++pack) {
-    score_frag[pack] = warp_slots[pack * warp_lanes + get_lane_id()];
-  }
-}
-
+// Keep every Q64 precision family on the same three-CTA scheduling target.
+// Pure INT8 then remains spill-free while its standalone resource envelope
+// matches the INT8 phase inside the ordered INT8 -> FP16 specialization.
 template <uint32_t HeadDim, bool HasFp8, bool HasFp16, bool SmoothK>
 __global__ __launch_bounds__(
-    32 * (kCtaQ / kWarpQ) * (kCtaK / kWarpK))
+    32 * (kCtaQ / kWarpQ) * (kCtaK / kWarpK),
+    kCtaQ == 64 ? 3 : 1)
 void MPA_ATTENTION_KERNEL_ENTRY(
     int8_t* __restrict__ q8,
     int8_t* __restrict__ k8,
@@ -632,12 +574,49 @@ void MPA_ATTENTION_KERNEL_ENTRY(
 
 #if MPA_DENSE_SEQUENTIAL
   const uint32_t low_iterations = HasFp8 ? num_physical_stages : 0;
-  const uint32_t high_iterations = 0;
+  const uint32_t initial_high_iterations = 0;
 #else
   const uint32_t low_iterations = HasFp8 ? fp8_count[metadata_row] : 0;
-  const uint32_t high_iterations = HasFp16 ? fp16_count[metadata_row] : 0;
+  const uint32_t initial_high_iterations = HasFp16
+      ? (HasFp8 && kCtaQ == 128 && low_iterations != 0
+             ? 0
+             : fp16_count[metadata_row])
+      : 0;
 #endif
-  if (low_iterations == 0 && high_iterations == 0) {
+  if (__builtin_expect(
+          low_iterations == 0 && initial_high_iterations == 0, false)) {
+#if defined(MPA_K64_BLOCK_MODE)
+    // Global density-matched routing is allowed to spend no stages on an
+    // individual query block.  The host intentionally allocates the output
+    // with torch::empty, so returning without a store would expose allocator
+    // history as attention output (and can surface stale NaNs on a later
+    // invocation).  An empty sparse row has a defined zero contribution; write
+    // only that CTA's rows and leave the common nonempty path unchanged.
+    const uint32_t query_begin = query_block * kCtaQ;
+    const uint32_t query_rows =
+        query_begin < qo_len ? min(kCtaQ, qo_len - query_begin) : 0;
+    const uint32_t linear_thread = warp_id * 32 + lane_id;
+    constexpr uint32_t threads = num_warps * 32;
+    constexpr uint32_t output_words_per_row =
+        HeadDim * sizeof(half) / sizeof(uint32_t);
+    static_assert(
+        HeadDim * sizeof(half) % sizeof(uint32_t) == 0,
+        "empty-route output must be vector aligned");
+    uint32_t* output_words = reinterpret_cast<uint32_t*>(output);
+    const uint32_t output_row =
+        (batch_id * num_qo_heads + head_id) * qo_len + query_begin;
+    const uint32_t output_word = output_row * output_words_per_row;
+    const uint32_t word_count = query_rows * output_words_per_row;
+    for (uint32_t word = linear_thread; word < word_count; word += threads) {
+      output_words[output_word + word] = 0;
+    }
+#if MPA_STORE_LSE
+    for (uint32_t row = linear_thread; row < query_rows; row += threads) {
+      lse[(batch_id * num_qo_heads + head_id) * qo_len + query_begin + row] =
+          -__int_as_float(0x7f800000);
+    }
+#endif
+#endif
     return;
   }
 
@@ -662,750 +641,7 @@ void MPA_ATTENTION_KERNEL_ENTRY(
     }
   }
 
-  if constexpr (HasFp8) {
-    if (low_iterations != 0) {
-      using QKSmem = LowQKSmem<HeadDim>;
-      QKSmem smem_q8(smem);
-      QKSmem smem_k8(smem + kCtaQ * HeadDim);
-      LowVSmem smem_v8(smem + (kCtaQ + kCtaK) * HeadDim);
-
-      constexpr uint32_t qk_line_lanes = HeadDim == 64 ? 4 : 8;
-      constexpr uint32_t qk_lines_per_warp = 32 / qk_line_lanes;
-      constexpr uint32_t qk_smem_iters_row =
-          HeadDim / (qk_line_lanes * kPackInt8);
-      constexpr uint32_t q_smem_iters_col =
-          kCtaQ / (num_warps * qk_lines_per_warp);
-      constexpr uint32_t k_smem_iters_col =
-          kCtaK / (num_warps * qk_lines_per_warp);
-      constexpr uint32_t v_line_lanes = 4;
-      constexpr uint32_t v_lines_per_warp = 8;
-      constexpr uint32_t v_smem_iters_row =
-          kCtaK / (v_line_lanes * kPackFp8);
-      constexpr uint32_t v_smem_iters_col =
-          HeadDim / (num_warps * v_lines_per_warp);
-
-      int8_t* q_lane =
-          q8 + ((batch_id * num_qo_heads + head_id) * qo_len +
-                query_block * kCtaQ +
-                kCtaQ / num_warps * warp_id + lane_id / qk_line_lanes) *
-                   HeadDim +
-          (lane_id % qk_line_lanes) * kPackInt8;
-      uint32_t q_smem_load = smem_q8.get_permuted_offset(
-          warp_id * qk_lines_per_warp * q_smem_iters_col +
-              lane_id / qk_line_lanes,
-          lane_id % qk_line_lanes);
-      const uint32_t q_load_row =
-          query_block * kCtaQ + kCtaQ / num_warps * warp_id +
-          lane_id / qk_line_lanes;
-      load_global_to_share<
-          qk_line_lanes, qk_lines_per_warp, qk_smem_iters_row,
-          q_smem_iters_col, (HeadDim == 64 ? SwizzleMode::k64B
-                                           : SwizzleMode::k128B),
-          HeadDim / kPackInt8, kCtaQ>(
-          q_lane, q_smem_load, HeadDim, smem_q8, q_load_row, qo_len);
-      cp_async::commit_group();
-      cp_async::wait_group<0>();
-      __syncthreads();
-
-      const uint32_t q_smem_mma = smem_q8.get_permuted_offset(
-          get_warp_idx_q<num_warps_q, num_warps_k>() * kWarpQ + lane_id % 16,
-          lane_id / 16);
-      const uint32_t k_smem_mma = smem_k8.get_permuted_offset(
-          lane_id % 8 + (lane_id / 16) * 8,
-          (lane_id / 8) % 2);
-      const float q_dequant_scale =
-          q_scale[(batch_id * num_qo_heads + head_id) * num_query_blocks +
-                  query_block];
-      uint32_t absolute_stage = 0;
-
-      // Keep the inherited Sparge/Sage copy/compute pipeline for every INT8
-      // phase. K and V occupy disjoint shared-memory regions:
-      // with two committed groups outstanding, wait_group<1> exposes the
-      // older operand while the newer operand continues to overlap compute.
-#if !MPA_DENSE_SEQUENTIAL
-        int32_t* low_lut = fp8_lut + metadata_row * num_physical_stages;
-        int32_t* low_delta = low_lut;
-#endif
-        const float* k_scale_base =
-            k_scale + (batch_id * num_kv_heads + kv_head) *
-                          num_physical_stages;
-
-        // Prologue: Q is already resident.  Issue predicated K0 followed by
-        // padded V0, leaving both groups outstanding.
-#if MPA_DENSE_SEQUENTIAL
-        absolute_stage = 0;
-#elif defined(MPA_K64_BLOCK_MODE)
-        absolute_stage = static_cast<uint32_t>(*low_delta++);
-#else
-        absolute_stage += static_cast<uint32_t>(*low_delta++);
-#endif
-        int8_t* k_lane =
-            k8 + ((batch_id * num_kv_heads + kv_head) * kv_len +
-                  absolute_stage * kCtaK +
-                  kCtaK / num_warps * warp_id + lane_id / qk_line_lanes) *
-                     HeadDim +
-            (lane_id % qk_line_lanes) * kPackInt8;
-        uint32_t k_smem_load = smem_k8.get_permuted_offset(
-            warp_id * qk_lines_per_warp * k_smem_iters_col +
-                lane_id / qk_line_lanes,
-            lane_id % qk_line_lanes);
-        uint32_t k_load_row =
-            absolute_stage * kCtaK + kCtaK / num_warps * warp_id +
-            lane_id / qk_line_lanes;
-        load_global_to_share<
-            qk_line_lanes, qk_lines_per_warp, qk_smem_iters_row,
-            k_smem_iters_col, (HeadDim == 64 ? SwizzleMode::k64B
-                                             : SwizzleMode::k128B),
-            HeadDim / kPackInt8, kCtaK>(
-            k_lane, k_smem_load, HeadDim, smem_k8, k_load_row, kv_len);
-        cp_async::commit_group();
-
-        float current_dequant_scale =
-            q_dequant_scale * k_scale_base[absolute_stage];
-
-        int8_t* v_lane =
-            reinterpret_cast<int8_t*>(v8) +
-            ((batch_id * num_kv_heads + kv_head) * HeadDim +
-             HeadDim / num_warps * warp_id + lane_id / v_line_lanes) *
-                padded_kv_len +
-            absolute_stage * kCtaK +
-            (lane_id % v_line_lanes) * kPackFp8;
-        uint32_t v_smem_load = smem_v8.get_permuted_offset(
-            warp_id * v_lines_per_warp * v_smem_iters_col +
-                lane_id / v_line_lanes,
-            lane_id % v_line_lanes);
-        load_fp8_V_global_to_share<
-            v_line_lanes, v_lines_per_warp, v_smem_iters_row,
-            v_smem_iters_col, SwizzleMode::k64B, kCtaK / kPackFp8,
-            kCtaK>(v_lane, v_smem_load, padded_kv_len, smem_v8);
-        cp_async::commit_group();
-
-        // Positions [0, n-3] retain donor rounding: the integer score is
-        // converted to float without pre-dequantization and q*k is folded
-        // into the softmax scale.
-        for (uint32_t iteration = 0;
-             iteration + 2 < low_iterations;
-             ++iteration) {
-          cp_async::wait_group<1>();
-          __syncthreads();
-
-          union LowScoreStorage {
-            int32_t as_int[num_tiles_q][num_tiles_k][8];
-            float as_float[num_tiles_q][num_tiles_k][8];
-          } rs_storage;
-          uint32_t q_offset = q_smem_mma;
-          uint32_t k_offset = k_smem_mma;
-          compute_int_qk<
-              num_warps_q, num_warps_k, num_tiles_q, num_tiles_k,
-              low_qk_inner, (HeadDim == 64 ? SwizzleMode::k64B
-                                           : SwizzleMode::k128B),
-              HeadDim / kPackInt8, DataType::kInt8>(
-              smem_q8, smem_k8, rs_storage.as_int, q_offset, k_offset);
-#pragma unroll
-          for (uint32_t fq = 0; fq < num_tiles_q; ++fq) {
-#pragma unroll
-            for (uint32_t fk = 0; fk < num_tiles_k; ++fk) {
-#pragma unroll
-              for (uint32_t element = 0; element < 8; ++element) {
-                rs_storage.as_float[fq][fk][element] = __int2float_rz(
-                    rs_storage.as_int[fq][fk][element]);
-              }
-            }
-          }
-#if defined(MPA_K64_BLOCK_MODE)
-          {
-            const uint32_t valid_k = static_cast<uint32_t>(
-                valid_k_counts[batch_id * num_physical_stages +
-                               absolute_stage]);
-            const uint32_t k_index_base =
-                get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
-                2 * (lane_id % 4);
-            apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(
-                k_index_base, rs_storage.as_float, valid_k);
-          }
-#endif
-          update_mdo<
-              num_tiles_q, num_tiles_k, num_tiles_v, false, true, false>(
-              rs_storage.as_float, ro, m, d,
-              base2_softmax_scale * current_dequant_scale);
-          accumulate_d<num_tiles_q, num_tiles_k, ComputeUnit::kCudaCore>(
-              rs_storage.as_float, d);
-          uint32_t rs_fp8[num_tiles_q][num_tiles_k / 2][4];
-          RS_32_to_8<num_tiles_q, num_tiles_k>(
-              rs_storage.as_float, rs_fp8);
-
-          // All stages reached here precede the final active stage, hence K
-          // is a full physical tile and the donor unpredicated copy is safe.
-          __syncthreads();
-#if MPA_DENSE_SEQUENTIAL
-          absolute_stage = iteration + 1;
-#elif defined(MPA_K64_BLOCK_MODE)
-          absolute_stage = static_cast<uint32_t>(*low_delta++);
-#else
-          absolute_stage += static_cast<uint32_t>(*low_delta++);
-#endif
-          k_lane =
-              k8 + ((batch_id * num_kv_heads + kv_head) * kv_len +
-                    absolute_stage * kCtaK +
-                    kCtaK / num_warps * warp_id +
-                    lane_id / qk_line_lanes) *
-                       HeadDim +
-              (lane_id % qk_line_lanes) * kPackInt8;
-          load_global_to_share<
-              qk_line_lanes, qk_lines_per_warp, qk_smem_iters_row,
-              k_smem_iters_col, (HeadDim == 64 ? SwizzleMode::k64B
-                                               : SwizzleMode::k128B),
-              HeadDim / kPackInt8, kCtaK>(
-              k_lane, k_smem_load, HeadDim, smem_k8);
-          cp_async::commit_group();
-
-          cp_async::wait_group<1>();
-          __syncthreads();
-          compute_fp8_sv_inst_buf_fp16_accu<
-              num_warps_q, num_warps_k, num_tiles_q, num_tiles_k,
-              num_tiles_v, SwizzleMode::k64B, kCtaK / kPackFp8>(
-              smem_v8, rs_fp8, ro, d);
-
-          __syncthreads();
-          v_lane =
-              reinterpret_cast<int8_t*>(v8) +
-              ((batch_id * num_kv_heads + kv_head) * HeadDim +
-               HeadDim / num_warps * warp_id + lane_id / v_line_lanes) *
-                  padded_kv_len +
-              absolute_stage * kCtaK +
-              (lane_id % v_line_lanes) * kPackFp8;
-          load_fp8_V_global_to_share<
-              v_line_lanes, v_lines_per_warp, v_smem_iters_row,
-              v_smem_iters_col, SwizzleMode::k64B, kCtaK / kPackFp8,
-              kCtaK>(v_lane, v_smem_load, padded_kv_len, smem_v8);
-          cp_async::commit_group();
-          current_dequant_scale =
-              q_dequant_scale * k_scale_base[absolute_stage];
-        }
-
-        // The second-last active position pre-dequantizes its score before
-        // softmax, matching donor instruction rounding exactly.  Its next K
-        // copy is the only prefetched K that may be a physical tail.
-        if (low_iterations > 1) {
-          cp_async::wait_group<1>();
-          __syncthreads();
-
-          union LowScoreStorage {
-            int32_t as_int[num_tiles_q][num_tiles_k][8];
-            float as_float[num_tiles_q][num_tiles_k][8];
-          } rs_storage;
-          uint32_t q_offset = q_smem_mma;
-          uint32_t k_offset = k_smem_mma;
-          compute_int_qk<
-              num_warps_q, num_warps_k, num_tiles_q, num_tiles_k,
-              low_qk_inner, (HeadDim == 64 ? SwizzleMode::k64B
-                                           : SwizzleMode::k128B),
-              HeadDim / kPackInt8, DataType::kInt8>(
-              smem_q8, smem_k8, rs_storage.as_int, q_offset, k_offset);
-#pragma unroll
-          for (uint32_t fq = 0; fq < num_tiles_q; ++fq) {
-#pragma unroll
-            for (uint32_t fk = 0; fk < num_tiles_k; ++fk) {
-#pragma unroll
-              for (uint32_t element = 0; element < 8; ++element) {
-                const float score = __int2float_rz(
-                    rs_storage.as_int[fq][fk][element]);
-                rs_storage.as_float[fq][fk][element] =
-                    score * current_dequant_scale;
-              }
-            }
-          }
-#if defined(MPA_K64_BLOCK_MODE)
-          {
-            const uint32_t valid_k = static_cast<uint32_t>(
-                valid_k_counts[batch_id * num_physical_stages +
-                               absolute_stage]);
-            const uint32_t k_index_base =
-                get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
-                2 * (lane_id % 4);
-            apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(
-                k_index_base, rs_storage.as_float, valid_k);
-          }
-#endif
-
-          __syncthreads();
-#if MPA_DENSE_SEQUENTIAL
-          absolute_stage = low_iterations - 1;
-#elif defined(MPA_K64_BLOCK_MODE)
-          absolute_stage = static_cast<uint32_t>(*low_delta++);
-#else
-          absolute_stage += static_cast<uint32_t>(*low_delta++);
-#endif
-          k_lane =
-              k8 + ((batch_id * num_kv_heads + kv_head) * kv_len +
-                    absolute_stage * kCtaK +
-                    kCtaK / num_warps * warp_id +
-                    lane_id / qk_line_lanes) *
-                       HeadDim +
-              (lane_id % qk_line_lanes) * kPackInt8;
-          k_load_row =
-              absolute_stage * kCtaK + kCtaK / num_warps * warp_id +
-              lane_id / qk_line_lanes;
-          load_global_to_share<
-              qk_line_lanes, qk_lines_per_warp, qk_smem_iters_row,
-              k_smem_iters_col, (HeadDim == 64 ? SwizzleMode::k64B
-                                               : SwizzleMode::k128B),
-              HeadDim / kPackInt8, kCtaK>(
-              k_lane, k_smem_load, HeadDim, smem_k8, k_load_row, kv_len);
-          cp_async::commit_group();
-
-          update_mdo<
-              num_tiles_q, num_tiles_k, num_tiles_v, false, true, false>(
-              rs_storage.as_float, ro, m, d, base2_softmax_scale);
-          accumulate_d<num_tiles_q, num_tiles_k, ComputeUnit::kCudaCore>(
-              rs_storage.as_float, d);
-          uint32_t rs_fp8[num_tiles_q][num_tiles_k / 2][4];
-          RS_32_to_8<num_tiles_q, num_tiles_k>(
-              rs_storage.as_float, rs_fp8);
-
-          __syncthreads();
-          cp_async::wait_group<1>();
-          __syncthreads();
-          compute_fp8_sv_inst_buf_fp16_accu<
-              num_warps_q, num_warps_k, num_tiles_q, num_tiles_k,
-              num_tiles_v, SwizzleMode::k64B, kCtaK / kPackFp8>(
-              smem_v8, rs_fp8, ro, d);
-
-          __syncthreads();
-          v_lane =
-              reinterpret_cast<int8_t*>(v8) +
-              ((batch_id * num_kv_heads + kv_head) * HeadDim +
-               HeadDim / num_warps * warp_id + lane_id / v_line_lanes) *
-                  padded_kv_len +
-              absolute_stage * kCtaK +
-              (lane_id % v_line_lanes) * kPackFp8;
-          load_fp8_V_global_to_share<
-              v_line_lanes, v_lines_per_warp, v_smem_iters_row,
-              v_smem_iters_col, SwizzleMode::k64B, kCtaK / kPackFp8,
-              kCtaK>(v_lane, v_smem_load, padded_kv_len, smem_v8);
-          cp_async::commit_group();
-          current_dequant_scale =
-              q_dequant_scale * k_scale_base[absolute_stage];
-        }
-
-        // Last active position: drain K first, apply the only tail mask, then
-        // drain V after producing the stage's online-softmax/P fragment.
-        {
-          cp_async::wait_group<1>();
-          __syncthreads();
-
-          union LowScoreStorage {
-            int32_t as_int[num_tiles_q][num_tiles_k][8];
-            float as_float[num_tiles_q][num_tiles_k][8];
-          } rs_storage;
-          uint32_t q_offset = q_smem_mma;
-          uint32_t k_offset = k_smem_mma;
-          compute_int_qk<
-              num_warps_q, num_warps_k, num_tiles_q, num_tiles_k,
-              low_qk_inner, (HeadDim == 64 ? SwizzleMode::k64B
-                                           : SwizzleMode::k128B),
-              HeadDim / kPackInt8, DataType::kInt8>(
-              smem_q8, smem_k8, rs_storage.as_int, q_offset, k_offset);
-#pragma unroll
-          for (uint32_t fq = 0; fq < num_tiles_q; ++fq) {
-#pragma unroll
-            for (uint32_t fk = 0; fk < num_tiles_k; ++fk) {
-#pragma unroll
-              for (uint32_t element = 0; element < 8; ++element) {
-                const float score = __int2float_rz(
-                    rs_storage.as_int[fq][fk][element]);
-                rs_storage.as_float[fq][fk][element] =
-                    score * current_dequant_scale;
-              }
-            }
-          }
-#if defined(MPA_K64_BLOCK_MODE)
-          const uint32_t valid_k = static_cast<uint32_t>(
-              valid_k_counts[batch_id * num_physical_stages +
-                             absolute_stage]);
-          const uint32_t k_index_base =
-              get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
-              2 * (lane_id % 4);
-          apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(
-              k_index_base, rs_storage.as_float, valid_k);
-#else
-          const uint32_t k_index_base =
-              absolute_stage * kCtaK +
-              get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
-              2 * (lane_id % 4);
-          apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(
-              k_index_base, rs_storage.as_float, kv_len);
-#endif
-          update_mdo<
-              num_tiles_q, num_tiles_k, num_tiles_v, false, true, false>(
-              rs_storage.as_float, ro, m, d, base2_softmax_scale);
-          accumulate_d<num_tiles_q, num_tiles_k, ComputeUnit::kCudaCore>(
-              rs_storage.as_float, d);
-          uint32_t rs_fp8[num_tiles_q][num_tiles_k / 2][4];
-          RS_32_to_8<num_tiles_q, num_tiles_k>(
-              rs_storage.as_float, rs_fp8);
-
-          cp_async::wait_group<0>();
-          __syncthreads();
-          compute_fp8_sv_inst_buf_fp16_accu<
-              num_warps_q, num_warps_k, num_tiles_q, num_tiles_k,
-              num_tiles_v, SwizzleMode::k64B, kCtaK / kPackFp8>(
-              smem_v8, rs_fp8, ro, d);
-          __syncthreads();
-        }
-    }
-  }
-
-  if constexpr (HasFp16) {
-    const bool need_q16 = high_iterations != 0;
-    HalfQKVSmem<HeadDim> smem_q16(smem);
-
-    constexpr uint32_t half_line_lanes = 8;
-    constexpr uint32_t half_lines_per_warp = 4;
-    constexpr uint32_t half_smem_iters_row =
-        HeadDim / (half_line_lanes * kPackHalf);
-    constexpr uint32_t q_half_smem_iters_col =
-        kCtaQ / (num_warps * half_lines_per_warp);
-    if (need_q16) {
-      half* q_lane =
-          q16 + ((batch_id * num_qo_heads + head_id) * qo_len +
-                 query_block * kCtaQ +
-                 kCtaQ / num_warps * warp_id + lane_id / half_line_lanes) *
-                    HeadDim +
-          (lane_id % half_line_lanes) * kPackHalf;
-      uint32_t q_smem_load = smem_q16.get_permuted_offset(
-          warp_id * half_lines_per_warp * q_half_smem_iters_col +
-              lane_id / half_line_lanes,
-          lane_id % half_line_lanes);
-      const uint32_t q_load_row =
-          query_block * kCtaQ + kCtaQ / num_warps * warp_id +
-          lane_id / half_line_lanes;
-      load_global_to_share<
-          half_line_lanes, half_lines_per_warp, half_smem_iters_row,
-          q_half_smem_iters_col, SwizzleMode::k128B, HeadDim / kPackHalf,
-          kCtaQ>(
-          q_lane, q_smem_load, HeadDim, smem_q16, q_load_row, qo_len);
-      cp_async::commit_group();
-      cp_async::wait_group<0>();
-      __syncthreads();
-    }
-
-    if constexpr (HasFp8 && SmoothK) {
-      if (low_iterations != 0 && high_iterations != 0) {
-          const half* mean_base =
-              k_mean + (batch_id * num_kv_heads + kv_head) * HeadDim;
-          restore_smoothed_low_rowmax<HeadDim, num_tiles_q>(
-              smem_q16, mean_base, m, query_block, qo_len,
-              base2_softmax_scale);
-      }
-    }
-  }
-
-  // Precision-boundary conversion: every executed FP8 phase leaves both the
-  // probability-offset domain and the quantized-V domain before the final
-  // normalize, including the compile-time FP8-only family.
-  if constexpr (HasFp8) {
-    if (low_iterations != 0) {
-      const float* v_scale_base =
-          v_scale + (batch_id * num_kv_heads + kv_head) * HeadDim;
-      leave_fp8_probability_and_v_domains(ro, d, v_scale_base);
-    }
-  }
-
-  if constexpr (HasFp16) {
-    HalfQKVSmem<HeadDim> smem_q16(smem);
-    HalfQKVSmem<HeadDim> smem_kv16(
-        smem + kCtaQ * HeadDim * sizeof(half));
-
-    constexpr uint32_t half_line_lanes = 8;
-    constexpr uint32_t half_lines_per_warp = 4;
-    constexpr uint32_t half_smem_iters_row =
-        HeadDim / (half_line_lanes * kPackHalf);
-    constexpr uint32_t kv_half_smem_iters_col =
-        kCtaK / (num_warps * half_lines_per_warp);
-
-    if (high_iterations != 0) {
-      int32_t* high_lut = fp16_lut + metadata_row * num_physical_stages;
-      const uint32_t q_smem_mma = smem_q16.get_permuted_offset(
-          get_warp_idx_q<num_warps_q, num_warps_k>() * kWarpQ + lane_id % 16,
-          lane_id / 16);
-      const uint32_t kv_smem_mma = smem_kv16.get_permuted_offset(
-          lane_id % 8 + (lane_id / 16) * 8,
-          (lane_id / 8) % 2);
-      uint32_t absolute_stage = 0;
-
-      for (uint32_t iteration = 0; iteration < high_iterations; ++iteration) {
-#if defined(MPA_K64_BLOCK_MODE)
-        // The H3 mixed route keeps one compact video list per row. FP8 reads
-        // its leading segment. FP16 first executes the exact prefix stages,
-        // then reads the following rescue segment after the row's variable
-        // FP8 count. This avoids materializing a second full R x K LUT.
-        absolute_stage = iteration < fp16_prefix_stages
-            ? iteration
-            : static_cast<uint32_t>(
-                  high_lut[
-                      low_iterations + iteration - fp16_prefix_stages]);
-#else
-        absolute_stage += static_cast<uint32_t>(high_lut[iteration]);
-#endif
-
-        if constexpr (HeadDim == 128 && num_tiles_q == 2) {
-          if (iteration != 0) {
-            reload_d128_fq0_q(
-                smem_q16, q16, batch_id, head_id, num_qo_heads,
-                query_block, qo_len);
-          }
-        }
-
-        if constexpr (HeadDim == 128 && HasFp8 && num_tiles_q == 2) {
-          const uint32_t k_load_row =
-              absolute_stage * kCtaK + kCtaK / num_warps * warp_id +
-              lane_id / half_line_lanes;
-          const uint32_t kv_head_row =
-              batch_id * num_kv_heads + kv_head;
-          uint32_t k_logical_row;
-          asm volatile(
-              "mad.lo.u32 %0, %1, %2, %3;\n"
-              : "=r"(k_logical_row)
-              : "r"(kv_head_row), "r"(kv_len), "r"(k_load_row));
-          half* k_lane =
-              k16 + k_logical_row * HeadDim +
-              (lane_id % half_line_lanes) * kPackHalf;
-          uint32_t k_smem_load = smem_kv16.get_permuted_offset(
-              warp_id * half_lines_per_warp * kv_half_smem_iters_col +
-                  lane_id / half_line_lanes,
-              lane_id % half_line_lanes);
-          load_global_to_share<
-              half_line_lanes, half_lines_per_warp, half_smem_iters_row,
-              kv_half_smem_iters_col, SwizzleMode::k128B,
-              HeadDim / kPackHalf, kCtaK>(
-              k_lane, k_smem_load, HeadDim, smem_kv16, k_load_row, kv_len);
-        } else {
-          half* k_lane =
-              k16 + ((batch_id * num_kv_heads + kv_head) * kv_len +
-                     absolute_stage * kCtaK +
-                     kCtaK / num_warps * warp_id +
-                     lane_id / half_line_lanes) *
-                        HeadDim +
-              (lane_id % half_line_lanes) * kPackHalf;
-          uint32_t k_smem_load = smem_kv16.get_permuted_offset(
-              warp_id * half_lines_per_warp * kv_half_smem_iters_col +
-                  lane_id / half_line_lanes,
-              lane_id % half_line_lanes);
-          const uint32_t k_load_row =
-              absolute_stage * kCtaK + kCtaK / num_warps * warp_id +
-              lane_id / half_line_lanes;
-          load_global_to_share<
-              half_line_lanes, half_lines_per_warp, half_smem_iters_row,
-              kv_half_smem_iters_col, SwizzleMode::k128B,
-              HeadDim / kPackHalf, kCtaK>(
-              k_lane, k_smem_load, HeadDim, smem_kv16, k_load_row, kv_len);
-        }
-        cp_async::commit_group();
-        cp_async::wait_group<0>();
-        __syncthreads();
-
-        if constexpr (HeadDim == 128 && num_tiles_q == 2) {
-          // fq=0 is stashed into its consumed Q rows; fq=1 remains in
-          // registers.  This removes 32 live score registers at the QK peak
-          // while keeping the CTA-lifetime FP32 m/d/O state in registers.
-          float rs_active[1][num_tiles_k][8];
-          uint32_t q_offset_fq0 = q_smem_mma;
-          uint32_t k_offset_fq0 = kv_smem_mma;
-          compute_half_qk<
-              num_warps_q, num_warps_k, 1, num_tiles_k,
-              half_qk_inner, SwizzleMode::k128B, HeadDim / kPackHalf>(
-              smem_q16, smem_kv16, rs_active,
-              q_offset_fq0, k_offset_fq0);
-          if (
-#if defined(MPA_K64_BLOCK_MODE)
-              true
-#else
-              iteration + 1 == high_iterations
-#endif
-          ) {
-#if defined(MPA_K64_BLOCK_MODE)
-            const uint32_t valid_k = static_cast<uint32_t>(
-                valid_k_counts[batch_id * num_physical_stages +
-                               absolute_stage]);
-            const uint32_t k_index_base =
-                get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
-                2 * (lane_id % 4);
-            apply_out_of_bound_mask<1, num_tiles_k>(
-                k_index_base, rs_active, valid_k);
-#else
-            const uint32_t k_index_base =
-                absolute_stage * kCtaK +
-                get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
-                2 * (lane_id % 4);
-            apply_out_of_bound_mask<1, num_tiles_k>(
-                k_index_base, rs_active, kv_len);
-#endif
-          }
-          stash_d128_fq0_scores<num_tiles_k>(smem, rs_active);
-
-          uint32_t q_offset_fq1 = smem_q16.get_permuted_offset(
-              get_warp_idx_q<num_warps_q, num_warps_k>() * kWarpQ +
-                  kMmaQkM + lane_id % 16,
-              lane_id / 16);
-          uint32_t k_offset_fq1 = kv_smem_mma;
-          compute_half_qk<
-              num_warps_q, num_warps_k, 1, num_tiles_k,
-              half_qk_inner, SwizzleMode::k128B, HeadDim / kPackHalf>(
-              smem_q16, smem_kv16, rs_active,
-              q_offset_fq1, k_offset_fq1);
-          if (
-#if defined(MPA_K64_BLOCK_MODE)
-              true
-#else
-              iteration + 1 == high_iterations
-#endif
-          ) {
-#if defined(MPA_K64_BLOCK_MODE)
-            const uint32_t valid_k = static_cast<uint32_t>(
-                valid_k_counts[batch_id * num_physical_stages +
-                               absolute_stage]);
-            const uint32_t k_index_base =
-                get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
-                2 * (lane_id % 4);
-            apply_out_of_bound_mask<1, num_tiles_k>(
-                k_index_base, rs_active, valid_k);
-#else
-            const uint32_t k_index_base =
-                absolute_stage * kCtaK +
-                get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
-                2 * (lane_id % 4);
-            apply_out_of_bound_mask<1, num_tiles_k>(
-                k_index_base, rs_active, kv_len);
-#endif
-          }
-
-          // K and V share one 16-KiB scratch region.  V copy overlaps fq=1
-          // softmax and P conversion; fq=0 is recovered after fq=1 PV.
-          __syncthreads();
-          const uint32_t v_load_row =
-              absolute_stage * kCtaK + kCtaK / num_warps * warp_id +
-              lane_id / half_line_lanes;
-          const uint32_t kv_head_row =
-              batch_id * num_kv_heads + kv_head;
-          uint32_t v_logical_row;
-          // Materialize V's full logical row at its use site.  Leaving the
-          // equivalent K/V expression visible lets ptxas keep one row base
-          // live across the entire D128 score/softmax/PV region and spill it.
-          asm volatile(
-              "mad.lo.u32 %0, %1, %2, %3;\n"
-              : "=r"(v_logical_row)
-              : "r"(kv_head_row), "r"(kv_len), "r"(v_load_row));
-          half* v_lane =
-              v16 + v_logical_row * HeadDim +
-              (lane_id % half_line_lanes) * kPackHalf;
-          uint32_t v_smem_load = smem_kv16.get_permuted_offset(
-              warp_id * half_lines_per_warp * kv_half_smem_iters_col +
-                  lane_id / half_line_lanes,
-              lane_id % half_line_lanes);
-          load_global_to_share<
-              half_line_lanes, half_lines_per_warp, half_smem_iters_row,
-              kv_half_smem_iters_col, SwizzleMode::k128B,
-              HeadDim / kPackHalf, kCtaK>(
-              v_lane, v_smem_load, HeadDim, smem_kv16, v_load_row, kv_len);
-          cp_async::commit_group();
-
-          update_mdo<1, num_tiles_k, num_tiles_v, false, false, false>(
-              rs_active, ro + 1, m + 1, d + 1, base2_softmax_scale);
-          accumulate_d<1, num_tiles_k, ComputeUnit::kCudaCore>(
-              rs_active, d + 1);
-          pack_rs_fp16_inplace<1, num_tiles_k>(rs_active);
-          cp_async::wait_group<0>();
-          __syncthreads();
-          compute_fp16_sv_stage_tilewise<
-              0, 1, num_tiles_k, num_tiles_v,
-              SwizzleMode::k128B, HeadDim / kPackHalf, HasFp8>(
-              smem_kv16, rs_active, ro + 1);
-
-          // Reuse the same 32-register fragment for fq=0 instead of exposing
-          // two arrays to ptxas in one scope.
-          load_d128_fq0_scores<num_tiles_k>(smem, rs_active);
-          update_mdo<1, num_tiles_k, num_tiles_v, false, false, false>(
-              rs_active, ro, m, d, base2_softmax_scale);
-          accumulate_d<1, num_tiles_k, ComputeUnit::kCudaCore>(rs_active, d);
-          pack_rs_fp16_inplace<1, num_tiles_k>(rs_active);
-          compute_fp16_sv_stage_tilewise<
-              0, 1, num_tiles_k, num_tiles_v,
-              SwizzleMode::k128B, HeadDim / kPackHalf, HasFp8>(
-              smem_kv16, rs_active, ro);
-        } else {
-          float rs[num_tiles_q][num_tiles_k][8];
-          uint32_t q_offset = q_smem_mma;
-          uint32_t k_offset = kv_smem_mma;
-          compute_half_qk<
-              num_warps_q, num_warps_k, num_tiles_q, num_tiles_k,
-              half_qk_inner, SwizzleMode::k128B, HeadDim / kPackHalf>(
-              smem_q16, smem_kv16, rs, q_offset, k_offset);
-          if (
-#if defined(MPA_K64_BLOCK_MODE)
-              true
-#else
-              iteration + 1 == high_iterations
-#endif
-          ) {
-#if defined(MPA_K64_BLOCK_MODE)
-            const uint32_t valid_k = static_cast<uint32_t>(
-                valid_k_counts[batch_id * num_physical_stages +
-                               absolute_stage]);
-            const uint32_t k_index_base =
-                get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
-                2 * (lane_id % 4);
-            apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(
-                k_index_base, rs, valid_k);
-#else
-            const uint32_t k_index_base =
-                absolute_stage * kCtaK +
-                get_warp_idx_k<num_warps_q, num_warps_k>() * kWarpK +
-                2 * (lane_id % 4);
-            apply_out_of_bound_mask<num_tiles_q, num_tiles_k>(
-                k_index_base, rs, kv_len);
-#endif
-          }
-
-          __syncthreads();
-          half* v_lane =
-              v16 + ((batch_id * num_kv_heads + kv_head) * kv_len +
-                     absolute_stage * kCtaK +
-                     kCtaK / num_warps * warp_id +
-                     lane_id / half_line_lanes) *
-                        HeadDim +
-              (lane_id % half_line_lanes) * kPackHalf;
-          uint32_t v_smem_load = smem_kv16.get_permuted_offset(
-              warp_id * half_lines_per_warp * kv_half_smem_iters_col +
-                  lane_id / half_line_lanes,
-              lane_id % half_line_lanes);
-          const uint32_t v_load_row =
-              absolute_stage * kCtaK + kCtaK / num_warps * warp_id +
-              lane_id / half_line_lanes;
-          load_global_to_share<
-              half_line_lanes, half_lines_per_warp, half_smem_iters_row,
-              kv_half_smem_iters_col, SwizzleMode::k128B,
-              HeadDim / kPackHalf, kCtaK>(
-              v_lane, v_smem_load, HeadDim, smem_kv16, v_load_row, kv_len);
-          cp_async::commit_group();
-
-          update_mdo<
-              num_tiles_q, num_tiles_k, num_tiles_v, false, false, false>(
-              rs, ro, m, d, base2_softmax_scale);
-          accumulate_d<num_tiles_q, num_tiles_k, ComputeUnit::kCudaCore>(
-              rs, d);
-          pack_rs_fp16_inplace<num_tiles_q, num_tiles_k>(rs);
-          cp_async::wait_group<0>();
-          __syncthreads();
-          compute_fp16_sv_stage_tilewise<
-              0, num_tiles_q, num_tiles_k, num_tiles_v,
-              SwizzleMode::k128B, HeadDim / kPackHalf>(
-              smem_kv16, rs, ro);
-        }
-        __syncthreads();
-      }
-    }
-  }
+#include "mixed_attention_phase_composer.inl"
 
 #if defined(MPA_K64_BLOCK_MODE)
 #pragma unroll
@@ -1452,9 +688,14 @@ void MPA_ATTENTION_KERNEL_ENTRY(
   normalize_d_inplace<num_tiles_q, num_tiles_v>(ro, d);
 #endif
 
+  uint32_t output_warp_id = warp_id;
+  if constexpr (HeadDim == 128 && kCtaQ == 64 && HasFp8 && !HasFp16) {
+    asm volatile("mov.u32 %0, %%tid.y;" : "=r"(output_warp_id));
+  }
+
   OutputSmem<HeadDim> smem_output(smem);
   const uint32_t output_row_base =
-      get_warp_idx_q<num_warps_q, num_warps_k>() * kWarpQ + lane_id / 4;
+      output_warp_id * kWarpQ + lane_id / 4;
 #pragma unroll
   for (uint32_t fq = 0; fq < num_tiles_q; ++fq) {
 #pragma unroll
@@ -1504,17 +745,16 @@ void MPA_ATTENTION_KERNEL_ENTRY(
   half* output_lane =
       output + ((batch_id * num_qo_heads + head_id) * qo_len +
                 query_block * kCtaQ +
-                kWarpQ * get_warp_idx_q<num_warps_q, num_warps_k>() +
+                kWarpQ * output_warp_id +
                 lane_id / output_line_lanes) *
                    HeadDim +
       (lane_id % output_line_lanes) * kPackHalf;
   uint32_t output_offset = smem_output.get_permuted_offset(
-      get_warp_idx_q<num_warps_q, num_warps_k>() * kWarpQ +
-          lane_id / output_line_lanes,
+      output_warp_id * kWarpQ + lane_id / output_line_lanes,
       lane_id % output_line_lanes);
   uint32_t output_global_row =
       query_block * kCtaQ +
-      kCtaQ / num_warps * warp_id + lane_id / output_line_lanes;
+      kCtaQ / num_warps * output_warp_id + lane_id / output_line_lanes;
 #pragma unroll
   for (uint32_t row_iter = 0; row_iter < output_smem_iters_col; ++row_iter) {
 #pragma unroll
