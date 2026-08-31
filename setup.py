@@ -87,6 +87,9 @@ def _extensions():
                     _source(sm89 / "instantiations" / "inst_q128_k64_d128.cu"),
                     _source(sm89 / "instantiations" / "inst_q128_k64_d128_fp16.cu"),
                     _source(sm89 / "instantiations" / "inst_q128_k64_d128_int8.cu"),
+                    _source(sm89 / "instantiations" / "inst_q128_k64_d64.cu"),
+                    _source(sm89 / "instantiations" / "inst_q128_k64_d64_fp16.cu"),
+                    _source(sm89 / "instantiations" / "inst_q128_k64_d64_int8.cu"),
                 ],
                 include_dirs=[
                     str(attention),

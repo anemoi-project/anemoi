@@ -105,8 +105,12 @@ std::tuple<torch::Tensor, torch::Tensor> fp16_attention_forward(
   TORCH_CHECK(key.size(0) == query.size(0), "query/key batch mismatch");
   TORCH_CHECK(key.size(2) > 0 && key.size(2) % 64 == 0,
               "K must be a positive multiple of 64 physical slots");
-  TORCH_CHECK(query.size(3) == 128 && key.size(3) == 128,
-              "the initial native K64 specialization requires head_dim=128");
+  const bool supports_head_dim =
+      query.size(3) == 128 ||
+      (QueryBlock == 128 && query.size(3) == 64);
+  TORCH_CHECK(
+      supports_head_dim && key.size(3) == query.size(3),
+      "native K64 FP16 requires head_dim=128, or head_dim=64 with Q128");
   TORCH_CHECK(query.size(1) % key.size(1) == 0,
               "query heads must be divisible by KV heads");
   TORCH_CHECK(
@@ -144,6 +148,22 @@ std::tuple<torch::Tensor, torch::Tensor> fp16_attention_forward(
   cudaStream_t stream = at::cuda::getCurrentCUDAStream(query.get_device());
   if constexpr (QueryBlock == 64) {
     launch_mixed_attention_sm89_k64<128, false, true, false>(
+        nullptr, nullptr, nullptr,
+        reinterpret_cast<half*>(query.data_ptr<at::Half>()),
+        reinterpret_cast<half*>(key.data_ptr<at::Half>()),
+        reinterpret_cast<half*>(value.data_ptr<at::Half>()), nullptr,
+        reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+        nullptr, nullptr, block_ids.data_ptr<int32_t>(),
+        block_counts.data_ptr<int32_t>(), nullptr, nullptr, nullptr,
+        valid_k_counts.data_ptr<int32_t>(), lse.data_ptr<float>(), 0,
+        static_cast<uint32_t>(query.size(0)),
+        static_cast<uint32_t>(query.size(2)),
+        static_cast<uint32_t>(key.size(2)), 0,
+        static_cast<uint32_t>(query.size(1)),
+        static_cast<uint32_t>(key.size(1)),
+        static_cast<float>(softmax_scale), stream);
+  } else if (query.size(3) == 64) {
+    launch_mixed_attention_sm89_q128_k64<64, false, true, false>(
         nullptr, nullptr, nullptr,
         reinterpret_cast<half*>(query.data_ptr<at::Half>()),
         reinterpret_cast<half*>(key.data_ptr<at::Half>()),
@@ -257,8 +277,13 @@ std::tuple<torch::Tensor, torch::Tensor> mixed_attention_forward(
   TORCH_CHECK(k16.size(0) == q16.size(0), "query/key batch mismatch");
   TORCH_CHECK(k16.size(2) > 0 && k16.size(2) % 64 == 0,
               "K must be a positive multiple of 64 physical slots");
-  TORCH_CHECK(q16.size(3) == 128 && k16.size(3) == 128,
-              "native mixed K64 currently requires head_dim=128");
+  const bool supports_head_dim =
+      q16.size(3) == 128 ||
+      (!SmoothK && QueryBlock == 128 && q16.size(3) == 64);
+  TORCH_CHECK(
+      supports_head_dim && k16.size(3) == q16.size(3),
+      "native mixed K64 requires head_dim=128, or non-smooth head_dim=64 "
+      "with Q128");
   TORCH_CHECK(q16.size(1) % k16.size(1) == 0,
               "query heads must be divisible by KV heads");
   if constexpr (SmoothK) {
@@ -381,8 +406,54 @@ std::tuple<torch::Tensor, torch::Tensor> mixed_attention_forward(
         static_cast<uint32_t>(q16.size(1)),
         static_cast<uint32_t>(k16.size(1)),
         static_cast<float>(softmax_scale), stream);
+  } else if constexpr (!SmoothK) {
+    if (q16.size(3) == 64) {
+      launch_mixed_attention_sm89_q128_k64<64, true, true, false>(
+          q8.data_ptr<int8_t>(), k8.data_ptr<int8_t>(),
+          reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr()),
+          reinterpret_cast<half*>(q16.data_ptr<at::Half>()),
+          reinterpret_cast<half*>(k16.data_ptr<at::Half>()),
+          reinterpret_cast<half*>(v16.data_ptr<at::Half>()), nullptr,
+          reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+          fp8_block_ids.data_ptr<int32_t>(),
+          fp8_block_counts.data_ptr<int32_t>(),
+          fp8_block_ids.data_ptr<int32_t>(),
+          fp16_block_counts.data_ptr<int32_t>(), q_scale.data_ptr<float>(),
+          k_scale.data_ptr<float>(), v_scale.data_ptr<float>(),
+          valid_k_counts.data_ptr<int32_t>(), lse.data_ptr<float>(),
+          static_cast<uint32_t>(fp16_prefix_blocks),
+          static_cast<uint32_t>(q16.size(0)),
+          static_cast<uint32_t>(q16.size(2)),
+          static_cast<uint32_t>(k16.size(2)),
+          static_cast<uint32_t>(padded_kv_len),
+          static_cast<uint32_t>(q16.size(1)),
+          static_cast<uint32_t>(k16.size(1)),
+          static_cast<float>(softmax_scale), stream);
+    } else {
+      launch_mixed_attention_sm89_q128_k64<128, true, true, false>(
+          q8.data_ptr<int8_t>(), k8.data_ptr<int8_t>(),
+          reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr()),
+          reinterpret_cast<half*>(q16.data_ptr<at::Half>()),
+          reinterpret_cast<half*>(k16.data_ptr<at::Half>()),
+          reinterpret_cast<half*>(v16.data_ptr<at::Half>()), nullptr,
+          reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+          fp8_block_ids.data_ptr<int32_t>(),
+          fp8_block_counts.data_ptr<int32_t>(),
+          fp8_block_ids.data_ptr<int32_t>(),
+          fp16_block_counts.data_ptr<int32_t>(), q_scale.data_ptr<float>(),
+          k_scale.data_ptr<float>(), v_scale.data_ptr<float>(),
+          valid_k_counts.data_ptr<int32_t>(), lse.data_ptr<float>(),
+          static_cast<uint32_t>(fp16_prefix_blocks),
+          static_cast<uint32_t>(q16.size(0)),
+          static_cast<uint32_t>(q16.size(2)),
+          static_cast<uint32_t>(k16.size(2)),
+          static_cast<uint32_t>(padded_kv_len),
+          static_cast<uint32_t>(q16.size(1)),
+          static_cast<uint32_t>(k16.size(1)),
+          static_cast<float>(softmax_scale), stream);
+    }
   } else {
-    launch_mixed_attention_sm89_q128_k64<128, true, true, SmoothK>(
+    launch_mixed_attention_sm89_q128_k64<128, true, true, true>(
         q8.data_ptr<int8_t>(), k8.data_ptr<int8_t>(),
         reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr()),
         reinterpret_cast<half*>(q16.data_ptr<at::Half>()),
@@ -507,11 +578,13 @@ std::tuple<torch::Tensor, torch::Tensor> pure_fp8_attention_forward(
                   v8.scalar_type() == at::ScalarType::Float8_e4m3fn,
               "pure K64 audit requires INT8 Q/K and E4M3 V");
   TORCH_CHECK(q8.dim() == 4 && k8.dim() == 4 && v8.dim() == 4 &&
-                  q8.size(3) == 128 && k8.size(3) == 128 &&
+                  (q8.size(3) == 128 ||
+                   (!SmoothK && QueryBlock == 128 && q8.size(3) == 64)) &&
+                  k8.size(3) == q8.size(3) &&
                   k8.size(2) > 0 && k8.size(2) % 64 == 0 &&
                   q8.size(0) == k8.size(0) && q8.size(1) % k8.size(1) == 0 &&
                   v8.size(0) == k8.size(0) && v8.size(1) == k8.size(1) &&
-                  v8.size(2) == 128 && v8.size(3) >= k8.size(2),
+                  v8.size(2) == q8.size(3) && v8.size(3) >= k8.size(2),
               "invalid pure K64 audit operand shapes");
   static_assert(QueryBlock == 64 || QueryBlock == 128);
   const int64_t query_blocks =
@@ -565,6 +638,20 @@ std::tuple<torch::Tensor, torch::Tensor> pure_fp8_attention_forward(
   cudaStream_t stream = at::cuda::getCurrentCUDAStream(q8.get_device());
   if constexpr (QueryBlock == 64) {
     launch_mixed_attention_sm89_k64<128, true, false, false>(
+        q8.data_ptr<int8_t>(), k8.data_ptr<int8_t>(),
+        reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr()),
+        nullptr, nullptr, nullptr, nullptr,
+        reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+        block_ids.data_ptr<int32_t>(), block_counts.data_ptr<int32_t>(),
+        nullptr, nullptr, q_scale.data_ptr<float>(), k_scale.data_ptr<float>(),
+        v_scale.data_ptr<float>(), valid_k_counts.data_ptr<int32_t>(),
+        lse.data_ptr<float>(), 0, static_cast<uint32_t>(q8.size(0)),
+        static_cast<uint32_t>(q8.size(2)), static_cast<uint32_t>(k8.size(2)),
+        static_cast<uint32_t>(v8.size(3)), static_cast<uint32_t>(q8.size(1)),
+        static_cast<uint32_t>(k8.size(1)), static_cast<float>(softmax_scale),
+        stream);
+  } else if (q8.size(3) == 64) {
+    launch_mixed_attention_sm89_q128_k64<64, true, false, false>(
         q8.data_ptr<int8_t>(), k8.data_ptr<int8_t>(),
         reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr()),
         nullptr, nullptr, nullptr, nullptr,
