@@ -1264,7 +1264,9 @@ void MPA_ATTENTION_KERNEL_ENTRY(
     }
   }
 #if MPA_STORE_LSE
-  if (lane_id % 4 == 0) {
+  constexpr bool kInnerLseNullGuard =
+      kCtaQ == 128 && MPA_LOW4_NVFP4 && MPA_MIDDLE_MXFP8 && !HasFp16;
+  if ((kInnerLseNullGuard || lse != nullptr) && lane_id % 4 == 0) {
 #pragma unroll
     for (uint32_t fq = 0; fq < num_tiles_q; ++fq) {
 #pragma unroll
@@ -1273,7 +1275,8 @@ void MPA_ATTENTION_KERNEL_ENTRY(
             get_warp_idx_q<num_warps_q, num_warps_k>() * kWarpQ +
             fq * kMmaQkM + lane_id / 4 + row_half * 8;
         const uint32_t global_row = query_block * kCtaQ + local_row;
-        if (global_row < qo_len) {
+        if (global_row < qo_len &&
+            (!kInnerLseNullGuard || lse != nullptr)) {
           lse[(batch_id * num_qo_heads + head_id) * qo_len + global_row] =
               m[fq][row_half];
         }
@@ -1369,75 +1372,6 @@ void MPA_ATTENTION_KERNEL_ENTRY(
 
 }  // namespace mpa::attention
 
-#if defined(MPA_K64_BLOCK_MODE)
-namespace {
-
-template <uint32_t HeadDim, bool HasFp8, bool HasFp16>
-__global__ void store_empty_k64_blocks(
-    half* __restrict__ output,
-    float* __restrict__ lse,
-    const int32_t* __restrict__ fp8_count,
-    const int32_t* __restrict__ fp16_count,
-#if MPA_THREE_PHASE
-    const int32_t* __restrict__ middle_count,
-#endif
-    uint32_t qo_len,
-    uint32_t kv_len,
-    uint32_t num_qo_heads) {
-  const uint32_t query_block = blockIdx.x;
-  const uint32_t metadata_row =
-      (blockIdx.z * num_qo_heads + blockIdx.y) * gridDim.x + query_block;
-#if MPA_DENSE_SEQUENTIAL
-  const uint32_t nv_iterations = 0;
-  const uint32_t low_iterations =
-      HasFp8 ? div_ceil(kv_len, mpa::attention::kCtaK) : 0;
-#elif MPA_THREE_PHASE
-  const uint32_t nv_iterations = HasFp8 ? fp8_count[metadata_row] : 0;
-  const uint32_t low_iterations = HasFp8 ? middle_count[metadata_row] : 0;
-#elif MPA_LOW4_NVFP4
-  const uint32_t nv_iterations = HasFp8 ? fp8_count[metadata_row] : 0;
-  const uint32_t low_iterations = 0;
-#else
-  const uint32_t nv_iterations = 0;
-  const uint32_t low_iterations = HasFp8 ? fp8_count[metadata_row] : 0;
-#endif
-  const uint32_t route_low_iterations = nv_iterations + low_iterations;
-#if MPA_LOW4_NVFP4 || MPA_MIDDLE_INT8 || MPA_MIDDLE_MXFP8
-  const uint32_t initial_high_iterations =
-      HasFp16 && route_low_iterations == 0 ? fp16_count[metadata_row] : 0;
-#else
-  const uint32_t initial_high_iterations =
-      HasFp16 ? fp16_count[metadata_row] : 0;
-#endif
-  if (route_low_iterations != 0 || initial_high_iterations != 0) {
-    return;
-  }
-
-  const uint32_t query_begin = query_block * mpa::attention::kCtaQ;
-  const uint32_t query_rows = query_begin < qo_len
-      ? min(mpa::attention::kCtaQ, qo_len - query_begin)
-      : 0;
-  constexpr uint32_t output_words_per_row =
-      HeadDim * sizeof(half) / sizeof(uint32_t);
-  uint32_t* output_words = reinterpret_cast<uint32_t*>(output);
-  const uint32_t output_row =
-      (blockIdx.z * num_qo_heads + blockIdx.y) * qo_len + query_begin;
-  const uint32_t output_word = output_row * output_words_per_row;
-  const uint32_t word_count = query_rows * output_words_per_row;
-  for (uint32_t word = threadIdx.x; word < word_count; word += blockDim.x) {
-    output_words[output_word + word] = 0;
-  }
-#if MPA_STORE_LSE
-  for (uint32_t row = threadIdx.x; row < query_rows; row += blockDim.x) {
-    lse[(blockIdx.z * num_qo_heads + blockIdx.y) * qo_len + query_begin + row] =
-        -__int_as_float(0x7f800000);
-  }
-#endif
-}
-
-}  // namespace
-#endif
-
 template <uint32_t HeadDim, bool HasFp8, bool HasFp16, bool SmoothK>
 void MPA_ATTENTION_LAUNCH_ENTRY(
     int8_t* q8,
@@ -1527,15 +1461,6 @@ void MPA_ATTENTION_LAUNCH_ENTRY(
 #endif
       qo_len, kv_len,
       padded_kv_len, num_qo_heads / num_kv_heads, softmax_scale);
-#if defined(MPA_K64_BLOCK_MODE)
-  store_empty_k64_blocks<HeadDim, HasFp8, HasFp16>
-      <<<grid, 256, 0, stream>>>(
-          output, lse, fp8_count, fp16_count,
-#if MPA_THREE_PHASE
-          middle_count,
-#endif
-          qo_len, kv_len, num_qo_heads);
-#endif
 }
 
 #undef MPA_ATTENTION_KERNEL_ENTRY

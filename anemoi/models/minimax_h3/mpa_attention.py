@@ -435,7 +435,7 @@ class H3MPAAttention:
         if not all(isinstance(tensor, torch.Tensor) for tensor in (q, k, v)):
             raise TypeError("Q/K/V must be tensors")
         if q.shape != k.shape or q.shape != v.shape or q.ndim != 3:
-            raise ValueError("Q/K/V must share [sequence,heads,128]")
+            raise ValueError("Q/K/V must share [sequence,heads,D]")
         if (
             q.device.type != "cuda"
             or k.device != q.device
@@ -443,10 +443,12 @@ class H3MPAAttention:
             or q.dtype not in (torch.float16, torch.bfloat16)
             or k.dtype != q.dtype
             or v.dtype != q.dtype
-            or q.shape[-1] != 128
+            or q.shape[-1] not in (64, 128)
             or any(tensor.stride(-1) != 1 for tensor in (q, k, v))
         ):
-            raise ValueError("Q/K/V must be same-dtype CUDA tensors with head_dim=128")
+            raise ValueError(
+                "Q/K/V must be same-dtype CUDA tensors with head_dim 64 or 128"
+            )
 
     @staticmethod
     def dense(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:

@@ -1,5 +1,6 @@
 import hashlib
 import os
+import re
 import runpy
 import sys
 import unittest
@@ -142,6 +143,25 @@ class SM120Q64BuildTests(unittest.TestCase):
         body = source[start : source.index("return output;", start)]
         self.assertIn("sm89_or_sm120_execution_device(properties)", body)
         self.assertIn("H3 K64 output assembly requires sm89 or sm120", source)
+
+    def test_sm120_production_assembly_receives_physical_route_counts(self) -> None:
+        source = (ROOT / "anemoi/layers/attention/mpa/executor.py").read_text()
+
+        self.assertIn(
+            "route_counts=(nv_counts, middle_counts, fp16_counts)", source
+        )
+        self.assertIn("query_block_size=query_block_size", source)
+
+    def test_sm120_empty_cleanup_is_owned_by_final_assembly(self) -> None:
+        source = (
+            ROOT / "csrc/attention/cuda/sm120/q64_attention.cuh"
+        ).read_text()
+
+        self.assertNotIn("store_empty_k64_blocks", source)
+        self.assertIn(
+            "if (route_low_iterations == 0 && initial_high_iterations == 0)",
+            source,
+        )
 
     def test_q128_phase_stacks_keep_middle_formats_separate(self) -> None:
         root = ROOT / "csrc/attention/cuda/sm120/instantiations"
@@ -528,6 +548,26 @@ class SM120Q64BuildTests(unittest.TestCase):
             "inst_q128_k64_d128_int8.cu",
         ):
             self.assertNotIn("MPA_DENSE_SEQUENTIAL", (root / name).read_text())
+
+    def test_sm120_sparse_attention_disables_lse_writeback_at_runtime(self) -> None:
+        root = ROOT / "csrc/attention/cuda/sm120"
+        kernel = (root / "q64_attention.cuh").read_text()
+        host = (root / "q64_attention_host.cu").read_text()
+
+        self.assertIn("constexpr bool kInnerLseNullGuard", kernel)
+        self.assertIn("lse != nullptr", kernel)
+        self.assertIn("lse[(batch_id * num_qo_heads", kernel)
+        self.assertNotIn("lse.data_ptr", host)
+        self.assertGreaterEqual(
+            len(re.findall(
+                r"valid_k_counts\.data_ptr<int32_t>\(\),\s*nullptr,", host
+            )),
+            5,
+        )
+        self.assertEqual(
+            len(re.findall(r"auto lse = torch::empty\(\s*\{0\},", host)),
+            5,
+        )
 
     def test_sm89_optimized_int8_loop_is_shared_by_mixed_phase(self) -> None:
         source = (

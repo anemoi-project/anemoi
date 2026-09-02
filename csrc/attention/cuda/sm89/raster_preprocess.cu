@@ -19,9 +19,9 @@
  * R=F*ceil(Y/8)*ceil(X/16).  BF16 is narrowed to FP16 before storage and every
  * virtual edge slot is written as the exact +0 FP16 bit pattern.
  *
- * This increment intentionally does not quantize Q/K or transform V.  The
- * packed operands preserve raw K for the FP16 rescue phase and provide the
- * explicit validity padding required by the later raster-aware quantizers.
+ * The same translation unit owns the SM89-native prefix and contiguous Q/K
+ * INT8 producers plus fused H3 preparation, so the stable attention package
+ * has no runtime Triton preparation dependency.
  */
 
 #include <ATen/cuda/CUDAContext.h>
@@ -444,8 +444,166 @@ __device__ __forceinline__ float warp_allreduce_max(float value) {
   return value;
 }
 
+template <typename InputT>
+__device__ __forceinline__ float load_float_scalar(
+    const InputT* input,
+    int64_t offset);
+
+template <>
+__device__ __forceinline__ float load_float_scalar<half>(
+    const half* input,
+    int64_t offset) {
+  return __half2float(input[offset]);
+}
+
+template <>
+__device__ __forceinline__ float load_float_scalar<nv_bfloat16>(
+    const nv_bfloat16* input,
+    int64_t offset) {
+  return __bfloat162float(input[offset]);
+}
+
+template <typename InputT, int32_t HeadDim>
+__global__ void prepare_sm89_prefix_q_int8_kernel(
+    const InputT* __restrict__ query,
+    int8_t* __restrict__ output,
+    float* __restrict__ scales,
+    int64_t heads,
+    int64_t prefix_tokens,
+    int64_t padded_tokens,
+    int64_t stride_batch,
+    int64_t stride_head,
+    int64_t stride_token) {
+  static_assert(HeadDim == 64 || HeadDim == 128);
+  constexpr int32_t BlockTokens = 64;
+  constexpr int32_t Warps = HeadDim / 32;
+  __shared__ float tile[BlockTokens * HeadDim];
+  __shared__ float warp_amax[Warps];
+  __shared__ float block_scale;
+
+  const int64_t block = blockIdx.x;
+  const int64_t head = blockIdx.y;
+  const int64_t batch = blockIdx.z;
+  const int32_t channel = threadIdx.x;
+  const int32_t lane = channel & 31;
+  const int32_t warp = channel >> 5;
+  float local_amax = 0.0f;
+
+#pragma unroll 1
+  for (int32_t token = 0; token < BlockTokens; ++token) {
+    const int64_t source_token = block * BlockTokens + token;
+    float value = 0.0f;
+    if (source_token < prefix_tokens) {
+      value = load_float_scalar(
+          query,
+          batch * stride_batch + head * stride_head +
+              source_token * stride_token + channel);
+    }
+    tile[token * HeadDim + channel] = value;
+    local_amax = fmaxf(local_amax, fabsf(value));
+  }
+
+  const float reduced = warp_allreduce_max(local_amax);
+  if (lane == 0) warp_amax[warp] = reduced;
+  __syncthreads();
+  if (channel == 0) {
+    float amax = warp_amax[0];
+#pragma unroll
+    for (int32_t warp_index = 1; warp_index < Warps; ++warp_index) {
+      amax = fmaxf(amax, warp_amax[warp_index]);
+    }
+    block_scale = amax / 127.0f + 1.0e-7f;
+    scales[(batch * heads + head) * (padded_tokens / BlockTokens) + block] =
+        block_scale;
+  }
+  __syncthreads();
+
+#pragma unroll 1
+  for (int32_t token = 0; token < BlockTokens; ++token) {
+    float quantized = tile[token * HeadDim + channel] / block_scale;
+    quantized += quantized >= 0.0f ? 0.5f : -0.5f;
+    const int64_t output_token = block * BlockTokens + token;
+    output[((batch * heads + head) * padded_tokens + output_token) * HeadDim +
+           channel] = static_cast<int8_t>(__float2int_rz(quantized));
+  }
+}
+
+template <int32_t HeadDim, int32_t BlockTokens, bool SubtractMean>
+__global__ void quantize_sm89_contiguous_int8_kernel(
+    const half* __restrict__ input,
+    const half* __restrict__ mean,
+    int8_t* __restrict__ output,
+    float* __restrict__ scales,
+    int64_t heads,
+    int64_t tokens,
+    int64_t blocks) {
+  static_assert(HeadDim == 64 || HeadDim == 128);
+  static_assert(BlockTokens == 64 || BlockTokens == 128);
+  constexpr int32_t Threads = 256;
+  constexpr int32_t Warps = Threads / 32;
+  constexpr int32_t Elements = BlockTokens * HeadDim;
+  __shared__ half tile[BlockTokens * HeadDim];
+  __shared__ float warp_amax[Warps];
+  __shared__ float block_scale;
+
+  const int64_t block = blockIdx.x;
+  const int64_t head = blockIdx.y;
+  const int64_t batch = blockIdx.z;
+  const int64_t head_batch = batch * heads + head;
+  const int32_t thread = threadIdx.x;
+  const int32_t lane = thread & 31;
+  const int32_t warp = thread >> 5;
+  float local_amax = 0.0f;
+
+#pragma unroll
+  for (int32_t element = thread; element < Elements; element += Threads) {
+    const int32_t token = element / HeadDim;
+    const int32_t channel = element % HeadDim;
+    const int64_t source_token = block * BlockTokens + token;
+    half value = __float2half_rn(0.0f);
+    if (source_token < tokens) {
+      value = input[(head_batch * tokens + source_token) * HeadDim + channel];
+      if constexpr (SubtractMean) {
+        const half mean_value = mean[head_batch * HeadDim + channel];
+        value = __float2half_rn(
+            __half2float(value) - __half2float(mean_value));
+      }
+    }
+    tile[element] = value;
+    local_amax = fmaxf(local_amax, fabsf(__half2float(value)));
+  }
+
+  const float reduced = warp_allreduce_max(local_amax);
+  if (lane == 0) warp_amax[warp] = reduced;
+  __syncthreads();
+  if (thread == 0) {
+    float amax = warp_amax[0];
+#pragma unroll
+    for (int32_t warp_index = 1; warp_index < Warps; ++warp_index) {
+      amax = fmaxf(amax, warp_amax[warp_index]);
+    }
+    block_scale = amax / 127.0f + 1.0e-7f;
+    scales[head_batch * blocks + block] = block_scale;
+  }
+  __syncthreads();
+
+#pragma unroll
+  for (int32_t element = thread; element < Elements; element += Threads) {
+    const int32_t token = element / HeadDim;
+    const int32_t channel = element % HeadDim;
+    const int64_t output_token = block * BlockTokens + token;
+    if (output_token < tokens) {
+      float quantized = __half2float(tile[element]) / block_scale;
+      quantized += quantized >= 0.0f ? 0.5f : -0.5f;
+      output[(head_batch * tokens + output_token) * HeadDim + channel] =
+          static_cast<int8_t>(__float2int_rz(quantized));
+    }
+  }
+}
+
 template <
     typename InputT,
+    int32_t HeadDim,
     int32_t QueryBlock,
     bool SmoothK,
     bool HasMaxPool>
@@ -479,7 +637,7 @@ __global__ void prepare_h3_sm89_qk_single_load_kernel(
     int64_t k_stride_head,
     int64_t k_stride_token) {
   static_assert(QueryBlock == 64 || QueryBlock == 128);
-  constexpr int32_t HeadDim = 128;
+  static_assert(HeadDim == 64 || HeadDim == 128);
   constexpr int32_t Warps = HeadDim / 32;
   __shared__ half tile[QueryBlock * HeadDim];
   __shared__ int64_t staged_token_indices[QueryBlock];
@@ -506,11 +664,13 @@ __global__ void prepare_h3_sm89_qk_single_load_kernel(
   const int32_t lane = channel & 31;
   const int32_t warp = channel >> 5;
 
-  if (!is_prefix_key && channel < task_tokens) {
-    staged_token_indices[channel] =
-        video_token_indices[logical_block * QueryBlock + channel];
-    staged_slot_valid[channel] =
-        video_slot_valid[logical_block * QueryBlock + channel];
+  if (!is_prefix_key) {
+    for (int32_t token = channel; token < task_tokens; token += HeadDim) {
+      staged_token_indices[token] =
+          video_token_indices[logical_block * QueryBlock + token];
+      staged_slot_valid[token] =
+          video_slot_valid[logical_block * QueryBlock + token];
+    }
   }
   __syncthreads();
 
@@ -657,7 +817,7 @@ __global__ void prepare_h3_sm89_qk_single_load_kernel(
 // Stream the two K64 halves through one 16 KiB tile instead: every raw K value
 // is still fetched exactly once, while the K-side occupancy stays identical to
 // the native K64 preparation path.
-template <typename InputT, bool SmoothK, bool HasMaxPool>
+template <typename InputT, int32_t HeadDim, bool SmoothK, bool HasMaxPool>
 __global__ void prepare_h3_sm89_q128_key_single_load_kernel(
     const InputT* __restrict__ key,
     const int64_t* __restrict__ video_token_indices,
@@ -677,7 +837,7 @@ __global__ void prepare_h3_sm89_q128_key_single_load_kernel(
     int64_t stride_batch,
     int64_t stride_head,
     int64_t stride_token) {
-  constexpr int32_t HeadDim = 128;
+  static_assert(HeadDim == 64 || HeadDim == 128);
   constexpr int32_t StageTokens = 64;
   constexpr int32_t Warps = HeadDim / 32;
   __shared__ half tile[SmoothK ? 1 : StageTokens * HeadDim];
@@ -797,7 +957,7 @@ __global__ void prepare_h3_sm89_q128_key_single_load_kernel(
   }
 }
 
-template <typename InputT>
+template <typename InputT, int32_t HeadDim>
 __global__ void prepare_h3_sm89_v_single_load_kernel(
     const InputT* __restrict__ value,
     const int64_t* __restrict__ video_token_indices,
@@ -811,7 +971,7 @@ __global__ void prepare_h3_sm89_v_single_load_kernel(
     int64_t stride_batch,
     int64_t stride_head,
     int64_t stride_token) {
-  constexpr int32_t HeadDim = 128;
+  static_assert(HeadDim == 64 || HeadDim == 128);
   const int64_t physical_stage = blockIdx.x;
   const int64_t batch = blockIdx.z;
   const int64_t head = blockIdx.y;
@@ -855,6 +1015,7 @@ __global__ void prepare_h3_sm89_v_single_load_kernel(
       channel] = amax;
 }
 
+template <int32_t HeadDim>
 __global__ void prepare_h3_sm89_v_from_partials_kernel(
     const half* __restrict__ packed_v,
     const float* __restrict__ stage_amax,
@@ -864,7 +1025,7 @@ __global__ void prepare_h3_sm89_v_from_partials_kernel(
     int64_t physical_stages,
     int64_t key_physical_tokens,
     int64_t padded_key_tokens) {
-  constexpr int32_t HeadDim = 128;
+  static_assert(HeadDim == 64 || HeadDim == 128);
   constexpr int32_t StageTokens = 64;
   constexpr int32_t Threads = 256;
   constexpr int32_t ChannelTile = 32;
@@ -975,13 +1136,14 @@ __global__ void prepare_h3_sm89_v_from_partials_kernel(
   }
 }
 
+template <int32_t HeadDim>
 __global__ void reduce_h3_sm89_k_mean_kernel(
     const float* __restrict__ k_stage_sum,
     half* __restrict__ k_mean,
     int64_t heads,
     int64_t physical_stages,
     int64_t valid_tokens) {
-  constexpr int32_t HeadDim = 128;
+  static_assert(HeadDim == 64 || HeadDim == 128);
   const int32_t channel = threadIdx.x;
   const int64_t head_batch =
       static_cast<int64_t>(blockIdx.y) * heads + blockIdx.x;
@@ -994,7 +1156,7 @@ __global__ void reduce_h3_sm89_k_mean_kernel(
       __float2half_rn(sum / static_cast<float>(valid_tokens));
 }
 
-template <int32_t QueryBlock>
+template <int32_t HeadDim, int32_t QueryBlock>
 __global__ void quantize_h3_sm89_smoothed_k_kernel(
     const half* __restrict__ packed_k,
     const half* __restrict__ k_mean,
@@ -1007,7 +1169,7 @@ __global__ void quantize_h3_sm89_smoothed_k_kernel(
     int64_t physical_stages,
     int64_t key_physical_tokens) {
   static_assert(QueryBlock == 64 || QueryBlock == 128);
-  constexpr int32_t HeadDim = 128;
+  static_assert(HeadDim == 64 || HeadDim == 128);
   constexpr int32_t Warps = HeadDim / 32;
   __shared__ half centered_tile[64 * HeadDim];
   __shared__ float warp_amax[Warps];
@@ -1124,6 +1286,184 @@ void launch_raster_pack(
 
 }  // namespace
 }  // namespace mpa::attention
+
+std::tuple<torch::Tensor, torch::Tensor> prepare_sm89_prefix_q_int8(
+    torch::Tensor query,
+    int64_t prefix_tokens) {
+  using namespace mpa::attention;
+  check_raw_hnd(query, "query");
+  TORCH_CHECK(
+      prefix_tokens > 0 && prefix_tokens <= query.size(2),
+      "prefix_tokens must select a nonempty query prefix");
+  const int64_t prefix_blocks = (prefix_tokens + 63) / 64;
+  const int64_t padded_tokens = prefix_blocks * 64;
+
+  c10::cuda::CUDAGuard device_guard(query.device());
+  check_raster_and_grid(query, prefix_blocks, query.size(1));
+  auto output = torch::empty(
+      {query.size(0), query.size(1), padded_tokens, query.size(3)},
+      query.options().dtype(at::ScalarType::Char));
+  auto scales = torch::empty(
+      {query.size(0), query.size(1), prefix_blocks},
+      query.options().dtype(at::ScalarType::Float));
+  const dim3 grid(
+      static_cast<uint32_t>(prefix_blocks),
+      static_cast<uint32_t>(query.size(1)),
+      static_cast<uint32_t>(query.size(0)));
+  const cudaStream_t stream =
+      at::cuda::getCurrentCUDAStream(query.get_device());
+  const auto launch = [&](auto head_dim_tag, auto* input_tag) {
+    constexpr int32_t HeadDim = decltype(head_dim_tag)::value;
+    using InputT = std::remove_pointer_t<decltype(input_tag)>;
+    prepare_sm89_prefix_q_int8_kernel<InputT, HeadDim><<<
+        grid, HeadDim, 0, stream>>>(
+        reinterpret_cast<const InputT*>(query.data_ptr()),
+        output.data_ptr<int8_t>(), scales.data_ptr<float>(), query.size(1),
+        prefix_tokens, padded_tokens, query.stride(0), query.stride(1),
+        query.stride(2));
+  };
+  if (query.scalar_type() == at::ScalarType::Half) {
+    if (query.size(3) == 64) {
+      launch(std::integral_constant<int32_t, 64>{}, static_cast<half*>(nullptr));
+    } else {
+      launch(std::integral_constant<int32_t, 128>{}, static_cast<half*>(nullptr));
+    }
+  } else if (query.size(3) == 64) {
+    launch(
+        std::integral_constant<int32_t, 64>{},
+        static_cast<nv_bfloat16*>(nullptr));
+  } else {
+    launch(
+        std::integral_constant<int32_t, 128>{},
+        static_cast<nv_bfloat16*>(nullptr));
+  }
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return {output, scales};
+}
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+quantize_sm89_qk_int8(
+    torch::Tensor query,
+    torch::Tensor key,
+    std::optional<torch::Tensor> key_mean,
+    int64_t query_block_size) {
+  using namespace mpa::attention;
+  check_raw_hnd(query, "query");
+  check_raw_hnd(key, "key");
+  TORCH_CHECK(
+      query.scalar_type() == at::ScalarType::Half &&
+          key.scalar_type() == at::ScalarType::Half,
+      "query and key must have dtype torch.float16");
+  TORCH_CHECK(
+      query.is_contiguous() && key.is_contiguous(),
+      "query and key must be contiguous");
+  TORCH_CHECK(
+      query.device() == key.device(),
+      "query and key must share one CUDA device");
+  TORCH_CHECK(
+      query.size(0) == key.size(0) && query.size(3) == key.size(3),
+      "query and key batch/head-dimension shapes must match");
+  TORCH_CHECK(
+      query_block_size == 64 || query_block_size == 128,
+      "query_block_size must be 64 or 128");
+  if (key_mean.has_value()) {
+    const torch::Tensor& mean = *key_mean;
+    TORCH_CHECK(
+        mean.is_cuda() && mean.device() == key.device() &&
+            mean.scalar_type() == at::ScalarType::Half &&
+            mean.is_contiguous(),
+        "key_mean must be a contiguous CUDA FP16 tensor on the key device");
+    TORCH_CHECK(
+        mean.dim() == 3 && mean.size(0) == key.size(0) &&
+            mean.size(1) == key.size(1) && mean.size(2) == key.size(3),
+        "key_mean must have shape [B,Hkv,D]");
+  }
+
+  const int64_t query_blocks =
+      (query.size(2) + query_block_size - 1) / query_block_size;
+  const int64_t key_blocks = (key.size(2) + 63) / 64;
+  c10::cuda::CUDAGuard device_guard(query.device());
+  check_raster_and_grid(query, query_blocks, query.size(1));
+  check_raster_and_grid(key, key_blocks, key.size(1));
+  auto q8 = torch::empty_like(query, query.options().dtype(at::ScalarType::Char));
+  auto k8 = torch::empty_like(key, key.options().dtype(at::ScalarType::Char));
+  auto q_scale = torch::empty(
+      {query.size(0), query.size(1), query_blocks},
+      query.options().dtype(at::ScalarType::Float));
+  auto k_scale = torch::empty(
+      {key.size(0), key.size(1), key_blocks},
+      key.options().dtype(at::ScalarType::Float));
+  const cudaStream_t stream =
+      at::cuda::getCurrentCUDAStream(query.get_device());
+
+  const auto launch_query = [&](auto head_dim_tag, auto block_tag) {
+    constexpr int32_t HeadDim = decltype(head_dim_tag)::value;
+    constexpr int32_t BlockTokens = decltype(block_tag)::value;
+    const dim3 grid(
+        static_cast<uint32_t>(query_blocks),
+        static_cast<uint32_t>(query.size(1)),
+        static_cast<uint32_t>(query.size(0)));
+    quantize_sm89_contiguous_int8_kernel<HeadDim, BlockTokens, false><<<
+        grid, 256, 0, stream>>>(
+        reinterpret_cast<const half*>(query.data_ptr<at::Half>()), nullptr,
+        q8.data_ptr<int8_t>(), q_scale.data_ptr<float>(), query.size(1),
+        query.size(2), query_blocks);
+  };
+  const auto launch_key = [&](auto head_dim_tag, auto subtract_mean_tag) {
+    constexpr int32_t HeadDim = decltype(head_dim_tag)::value;
+    constexpr bool SubtractMean = decltype(subtract_mean_tag)::value;
+    const dim3 grid(
+        static_cast<uint32_t>(key_blocks),
+        static_cast<uint32_t>(key.size(1)),
+        static_cast<uint32_t>(key.size(0)));
+    const half* mean = key_mean.has_value()
+        ? reinterpret_cast<const half*>(key_mean->data_ptr<at::Half>())
+        : nullptr;
+    quantize_sm89_contiguous_int8_kernel<HeadDim, 64, SubtractMean><<<
+        grid, 256, 0, stream>>>(
+        reinterpret_cast<const half*>(key.data_ptr<at::Half>()), mean,
+        k8.data_ptr<int8_t>(), k_scale.data_ptr<float>(), key.size(1),
+        key.size(2), key_blocks);
+  };
+
+  if (query.size(3) == 64) {
+    if (query_block_size == 64) {
+      launch_query(
+          std::integral_constant<int32_t, 64>{},
+          std::integral_constant<int32_t, 64>{});
+    } else {
+      launch_query(
+          std::integral_constant<int32_t, 64>{},
+          std::integral_constant<int32_t, 128>{});
+    }
+    if (key_mean.has_value()) {
+      launch_key(
+          std::integral_constant<int32_t, 64>{}, std::true_type{});
+    } else {
+      launch_key(
+          std::integral_constant<int32_t, 64>{}, std::false_type{});
+    }
+  } else {
+    if (query_block_size == 64) {
+      launch_query(
+          std::integral_constant<int32_t, 128>{},
+          std::integral_constant<int32_t, 64>{});
+    } else {
+      launch_query(
+          std::integral_constant<int32_t, 128>{},
+          std::integral_constant<int32_t, 128>{});
+    }
+    if (key_mean.has_value()) {
+      launch_key(
+          std::integral_constant<int32_t, 128>{}, std::true_type{});
+    } else {
+      launch_key(
+          std::integral_constant<int32_t, 128>{}, std::false_type{});
+    }
+  }
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return {q8, q_scale, k8, k_scale};
+}
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
 pack_indexed_k64_qkv_fp16(
@@ -1340,9 +1680,7 @@ H3SM89Int8Prepared prepare_h3_sm89_int8_operands(
   TORCH_CHECK(
       query.sizes() == key.sizes() && query.sizes() == value.sizes(),
       "SM89 H3 Q/K/V shapes must match");
-  TORCH_CHECK(
-      query.size(3) == 128,
-      "SM89 fused INT8 preparation currently requires head_dim=128");
+  const int64_t head_dim = query.size(3);
   TORCH_CHECK(
       prefix_tokens >= 0 && prefix_tokens < query.size(2),
       "prefix_tokens must be nonnegative and smaller than the sequence");
@@ -1392,40 +1730,40 @@ H3SM89Int8Prepared prepare_h3_sm89_int8_operands(
   const auto int8_options = query.options().dtype(at::ScalarType::Char);
   const auto fp32_options = query.options().dtype(at::ScalarType::Float);
   auto q_pool = torch::empty(
-      {query.size(0), query.size(1), video_blocks, 128}, fp16_options);
+      {query.size(0), query.size(1), video_blocks, head_dim}, fp16_options);
   auto k_pool = torch::empty_like(q_pool);
   auto q_max_pool = has_maxpool ? torch::empty_like(q_pool)
                                 : torch::empty({0}, fp16_options);
   auto k_max_pool = has_maxpool ? torch::empty_like(q_pool)
                                 : torch::empty({0}, fp16_options);
   auto packed_q = torch::empty(
-      {query.size(0), query.size(1), video_physical_tokens, 128},
+      {query.size(0), query.size(1), video_physical_tokens, head_dim},
       fp16_options);
   auto packed_k = torch::empty(
-      {query.size(0), query.size(1), key_physical_tokens, 128},
+      {query.size(0), query.size(1), key_physical_tokens, head_dim},
       fp16_options);
   auto packed_v = torch::empty_like(packed_k);
   auto q8 = torch::empty(packed_q.sizes(), int8_options);
   auto k8 = torch::empty(packed_k.sizes(), int8_options);
   auto v8 = torch::empty(
-      {query.size(0), query.size(1), 128, padded_key_tokens},
+      {query.size(0), query.size(1), head_dim, padded_key_tokens},
       query.options().dtype(at::ScalarType::Float8_e4m3fn));
   auto q_scale = torch::empty(
       {query.size(0), query.size(1), video_blocks}, fp32_options);
   auto k_scale = torch::empty(
       {query.size(0), query.size(1), physical_stages}, fp32_options);
   auto v_scale = torch::empty(
-      {query.size(0), query.size(1), 128}, fp32_options);
+      {query.size(0), query.size(1), head_dim}, fp32_options);
   auto k_mean = smooth_k
-      ? torch::empty({query.size(0), query.size(1), 128}, fp16_options)
+      ? torch::empty({query.size(0), query.size(1), head_dim}, fp16_options)
       : torch::empty({0}, fp16_options);
   auto k_stage_sum = smooth_k
       ? torch::empty(
-            {query.size(0), query.size(1), physical_stages, 128},
+            {query.size(0), query.size(1), physical_stages, head_dim},
             fp32_options)
       : torch::empty({0}, fp32_options);
   auto v_stage_amax = torch::empty(
-      {query.size(0), query.size(1), physical_stages, 128},
+      {query.size(0), query.size(1), physical_stages, head_dim},
       fp32_options);
 
   const cudaStream_t stream =
@@ -1434,7 +1772,8 @@ H3SM89Int8Prepared prepare_h3_sm89_int8_operands(
       static_cast<uint32_t>(physical_stages),
       static_cast<uint32_t>(query.size(1)),
       static_cast<uint32_t>(query.size(0)));
-  const auto launch = [&](auto query_block_tag, auto* input_tag) {
+  const auto launch = [&](auto head_dim_tag, auto query_block_tag, auto* input_tag) {
+    constexpr int32_t HeadDim = decltype(head_dim_tag)::value;
     constexpr int32_t QueryBlock = decltype(query_block_tag)::value;
     using InputT = std::remove_pointer_t<decltype(input_tag)>;
     const auto launch_qk = [&](auto smooth_tag, auto maxpool_tag) {
@@ -1447,8 +1786,8 @@ H3SM89Int8Prepared prepare_h3_sm89_int8_operands(
           static_cast<uint32_t>(query.size(1)),
           static_cast<uint32_t>(query.size(0)));
       prepare_h3_sm89_qk_single_load_kernel<
-          InputT, QueryBlock, SmoothK, HasMaxPool><<<
-          fused_qk_grid, 128, 0, stream>>>(
+          InputT, HeadDim, QueryBlock, SmoothK, HasMaxPool><<<
+          fused_qk_grid, HeadDim, 0, stream>>>(
           reinterpret_cast<const InputT*>(query.data_ptr()),
           reinterpret_cast<const InputT*>(key.data_ptr()),
           video_token_indices.data_ptr<int64_t>(),
@@ -1479,7 +1818,8 @@ H3SM89Int8Prepared prepare_h3_sm89_int8_operands(
             static_cast<uint32_t>(query.size(1)),
             static_cast<uint32_t>(query.size(0)));
         prepare_h3_sm89_q128_key_single_load_kernel<
-            InputT, SmoothK, HasMaxPool><<<key_grid, 128, 0, stream>>>(
+            InputT, HeadDim, SmoothK, HasMaxPool><<<
+            key_grid, HeadDim, 0, stream>>>(
             reinterpret_cast<const InputT*>(key.data_ptr()),
             video_token_indices.data_ptr<int64_t>(),
             video_slot_valid.data_ptr<bool>(),
@@ -1509,7 +1849,8 @@ H3SM89Int8Prepared prepare_h3_sm89_int8_operands(
     }
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 
-    prepare_h3_sm89_v_single_load_kernel<InputT><<<v_grid, 128, 0, stream>>>(
+    prepare_h3_sm89_v_single_load_kernel<InputT, HeadDim><<<
+        v_grid, HeadDim, 0, stream>>>(
         reinterpret_cast<const InputT*>(value.data_ptr()),
         video_token_indices.data_ptr<int64_t>(),
         video_slot_valid.data_ptr<bool>(),
@@ -1523,13 +1864,14 @@ H3SM89Int8Prepared prepare_h3_sm89_int8_operands(
       const dim3 mean_grid(
           static_cast<uint32_t>(key.size(1)),
           static_cast<uint32_t>(key.size(0)));
-      reduce_h3_sm89_k_mean_kernel<<<mean_grid, 128, 0, stream>>>(
+      reduce_h3_sm89_k_mean_kernel<HeadDim><<<
+          mean_grid, HeadDim, 0, stream>>>(
           k_stage_sum.data_ptr<float>(),
           reinterpret_cast<half*>(k_mean.data_ptr<at::Half>()),
           key.size(1), physical_stages, key.size(2));
       C10_CUDA_KERNEL_LAUNCH_CHECK();
-      quantize_h3_sm89_smoothed_k_kernel<QueryBlock><<<
-          v_grid, 128, 0, stream>>>(
+      quantize_h3_sm89_smoothed_k_kernel<HeadDim, QueryBlock><<<
+          v_grid, HeadDim, 0, stream>>>(
           reinterpret_cast<const half*>(packed_k.data_ptr<at::Half>()),
           reinterpret_cast<const half*>(k_mean.data_ptr<at::Half>()),
           video_valid_counts.data_ptr<int32_t>(),
@@ -1539,11 +1881,22 @@ H3SM89Int8Prepared prepare_h3_sm89_int8_operands(
       C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
   };
-  const auto dispatch_input = [&](auto* input_tag) {
+  const auto dispatch_query_block = [&](auto head_dim_tag, auto* input_tag) {
     if (query_block_size == 64) {
-      launch(std::integral_constant<int32_t, 64>{}, input_tag);
+      launch(
+          head_dim_tag, std::integral_constant<int32_t, 64>{}, input_tag);
     } else {
-      launch(std::integral_constant<int32_t, 128>{}, input_tag);
+      launch(
+          head_dim_tag, std::integral_constant<int32_t, 128>{}, input_tag);
+    }
+  };
+  const auto dispatch_input = [&](auto* input_tag) {
+    if (head_dim == 64) {
+      dispatch_query_block(
+          std::integral_constant<int32_t, 64>{}, input_tag);
+    } else {
+      dispatch_query_block(
+          std::integral_constant<int32_t, 128>{}, input_tag);
     }
   };
   if (query.scalar_type() == at::ScalarType::Half) {
@@ -1553,19 +1906,27 @@ H3SM89Int8Prepared prepare_h3_sm89_int8_operands(
   }
 
   constexpr int32_t stage_stripes = 4;
-  constexpr int32_t channel_tiles = 128 / 32;
+  const int32_t channel_tiles = static_cast<int32_t>(head_dim / 32);
   const dim3 v_quant_grid(
       channel_tiles * stage_stripes,
       static_cast<uint32_t>(value.size(1)),
       static_cast<uint32_t>(value.size(0)));
-  prepare_h3_sm89_v_from_partials_kernel<<<
-      v_quant_grid, 256, 0, stream>>>(
-      reinterpret_cast<const half*>(packed_v.data_ptr<at::Half>()),
-      v_stage_amax.data_ptr<float>(),
-      reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr()),
-      v_scale.data_ptr<float>(),
-      value.size(1), physical_stages, key_physical_tokens,
-      padded_key_tokens);
+  const auto launch_v_quant = [&](auto head_dim_tag) {
+    constexpr int32_t HeadDim = decltype(head_dim_tag)::value;
+    prepare_h3_sm89_v_from_partials_kernel<HeadDim><<<
+        v_quant_grid, 256, 0, stream>>>(
+        reinterpret_cast<const half*>(packed_v.data_ptr<at::Half>()),
+        v_stage_amax.data_ptr<float>(),
+        reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr()),
+        v_scale.data_ptr<float>(),
+        value.size(1), physical_stages, key_physical_tokens,
+        padded_key_tokens);
+  };
+  if (head_dim == 64) {
+    launch_v_quant(std::integral_constant<int32_t, 64>{});
+  } else {
+    launch_v_quant(std::integral_constant<int32_t, 128>{});
+  }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
 
   return {

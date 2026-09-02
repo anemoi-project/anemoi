@@ -24,7 +24,9 @@
 #include <cuda/pipeline>
 #include <assert.h>
 
-#if (__CUDACC_VER_MAJOR__ * 10000 + __CUDACC_VER_MINOR__ * 100 >= 120400)
+#if (__CUDACC_VER_MAJOR__ * 10000 + __CUDACC_VER_MINOR__ * 100 < 120400)
+#error "Anemoi FP8 kernels require CUDA toolkit 12.4 or newer"
+#else
 #if (!defined(__CUDA_ARCH__) || (__CUDA_ARCH__ >= 890))
 #define FP8_CAST_ENABLED
 #endif

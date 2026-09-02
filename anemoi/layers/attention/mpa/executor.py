@@ -632,11 +632,11 @@ def sm89_ragged_h3_attention(
     """Run ragged 2-D routing through the native Q64/Q128 x K64 kernel."""
 
     if q_bshd.shape != k_bshd.shape or q_bshd.shape != v_bshd.shape:
-        raise ValueError("Q/K/V must share [1,S,H,128]")
+        raise ValueError("Q/K/V must share [1,S,H,D]")
     if (
         q_bshd.ndim != 4
         or q_bshd.size(0) != 1
-        or q_bshd.size(-1) != 128
+        or q_bshd.size(-1) not in (64, 128)
         or q_bshd.dtype not in (torch.float16, torch.bfloat16)
         or k_bshd.dtype != q_bshd.dtype
         or v_bshd.dtype != q_bshd.dtype
@@ -644,7 +644,7 @@ def sm89_ragged_h3_attention(
         or k_bshd.device != q_bshd.device
         or v_bshd.device != q_bshd.device
     ):
-        raise ValueError("Q/K/V must be same-dtype CUDA [1,S,H,128]")
+        raise ValueError("Q/K/V must be same-dtype CUDA [1,S,H,D], D in {64,128}")
     if torch.cuda.get_device_capability(q_bshd.device) != (8, 9):
         raise RuntimeError("the released native path requires SM89")
     if query_block_size not in (64, 128):
@@ -866,6 +866,8 @@ def sm89_ragged_h3_attention(
         video_output,
         layout.inverse,
         output_dtype=q_bshd.dtype,
+        route_counts=(fp8_counts, fp16_counts, None),
+        query_block_size=query_block_size,
     )
     _warmup_sync("output assembly", q_bshd.device)
     return output
@@ -1211,6 +1213,8 @@ def sm120_ragged_h3_attention(
         video_output,
         layout.inverse,
         output_dtype=q_bshd.dtype,
+        route_counts=(nv_counts, middle_counts, fp16_counts),
+        query_block_size=query_block_size,
     )
     _warmup_sync("Q128 output assembly", q_bshd.device)
     if profile_nvtx:

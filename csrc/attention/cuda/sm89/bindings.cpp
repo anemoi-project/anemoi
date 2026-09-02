@@ -82,6 +82,13 @@ TORCH_LIBRARY_FRAGMENT(mixed_attention, m) {
       "Tensor v_scale, Tensor valid_k_counts, float softmax_scale) "
       "-> (Tensor, Tensor)");
   m.def(
+      "prepare_sm89_prefix_q_int8(Tensor query, int prefix_tokens) "
+      "-> (Tensor, Tensor)");
+  m.def(
+      "quantize_sm89_qk_int8(Tensor query, Tensor key, "
+      "Tensor? key_mean=None, int query_block_size=64) "
+      "-> (Tensor, Tensor, Tensor, Tensor)");
+  m.def(
       "sm89_q64_prefix_int8_attention_forward("
       "Tensor q8, Tensor k8, Tensor v8, Tensor q_scale, Tensor k_scale, "
       "Tensor v_scale, Tensor valid_k_counts, int prefix_tokens, "
@@ -100,7 +107,9 @@ TORCH_LIBRARY_FRAGMENT(mixed_attention, m) {
   m.def(
       "assemble_h3_k64_output(Tensor prefix_output_bhsd, "
       "Tensor video_output_bhsd_fp16, Tensor video_inverse_indices, "
-      "ScalarType? output_dtype=None) -> Tensor");
+      "ScalarType? output_dtype=None, Tensor? low_counts=None, "
+      "Tensor? middle_counts=None, Tensor? high_counts=None, "
+      "int query_block_size=0) -> Tensor");
 }
 
 TORCH_LIBRARY_IMPL(mixed_attention, CUDA, m) {
@@ -132,6 +141,8 @@ TORCH_LIBRARY_IMPL(mixed_attention, CUDA, m) {
   m.impl(
       "q128_k64_smooth_fp8_attention_forward",
       &q128_k64_smooth_fp8_attention_forward);
+  m.impl("prepare_sm89_prefix_q_int8", &prepare_sm89_prefix_q_int8);
+  m.impl("quantize_sm89_qk_int8", &quantize_sm89_qk_int8);
   m.impl(
       "sm89_q64_prefix_int8_attention_forward",
       &sm89_q64_prefix_int8_attention_forward);

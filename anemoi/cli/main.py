@@ -2,16 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from anemoi.config import AttentionConfig, EngineConfig, SparsityScheduleConfig
+from anemoi.config import EngineConfig
 from anemoi.engine import AnemoiEngine
-from anemoi.layers.attention.draft_attention import DraftAttention, DraftAttentionConfig
-from anemoi.layers.attention.presets import PRESETS, get_preset
-from anemoi.layers.attention.sparse_attention import dense_attention_reference
 from anemoi.models import ModelSpec, ModelVariant, get_model_registry
 from anemoi.models.adapters import AdapterError
 from anemoi.types import GenerationRequest, TaskType
@@ -59,42 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
     generate_cmd.add_argument("--fps", type=float)
     generate_cmd.add_argument("--device", default="cuda")
     generate_cmd.add_argument("--offload", action="store_true")
-    generate_cmd.add_argument("--attention-backend", default="dense")
-    generate_cmd.add_argument(
-        "--sparsity-schedule",
-        type=Path,
-        help="JSON schedule with dense-step, per-step, and per-layer sparsity settings",
-    )
-    generate_cmd.add_argument("--dense-step-fraction", type=float, default=0.0)
-    generate_cmd.add_argument("--sparsity-ratio", type=float, default=0.9)
-    generate_cmd.add_argument("--pool-h", type=int, default=8)
-    generate_cmd.add_argument("--pool-w", type=int, default=16)
     generate_cmd.add_argument("--dry-run", action="store_true")
     generate_cmd.set_defaults(func=_generate)
-
-    smoke_cmd = subparsers.add_parser(
-        "draft-attn-smoke",
-        help="Run a synthetic Draft Attention sparse-attention smoke test",
-    )
-    smoke_cmd.add_argument("--preset", choices=sorted(PRESETS), required=True)
-    smoke_cmd.add_argument("--full-shape", action="store_true")
-    smoke_cmd.add_argument("--device", default="auto")
-    smoke_cmd.add_argument("--dtype", default="float32", choices=("float32", "float16", "bfloat16"))
-    smoke_cmd.add_argument("--backend", default="auto", choices=("auto", "torch", "triton"))
-    smoke_cmd.add_argument("--seed", type=int, default=0)
-    smoke_cmd.add_argument("--batch-size", type=int, default=1)
-    smoke_cmd.add_argument("--sparsity-ratio", type=float)
-    smoke_cmd.add_argument("--heads", type=int)
-    smoke_cmd.add_argument("--head-dim", type=int)
-    smoke_cmd.add_argument("--draft-q-chunk-size", type=int, default=64)
-    smoke_cmd.add_argument("--draft-k-chunk-size", type=int, default=64)
-    smoke_cmd.add_argument("--compare-dense", action="store_true")
-    smoke_cmd.add_argument(
-        "--full-mask-check",
-        action="store_true",
-        help="Force sparsity_ratio=0 and compare Draft Attention to dense attention",
-    )
-    smoke_cmd.set_defaults(func=_draft_attn_smoke)
 
     return parser
 
@@ -161,30 +123,11 @@ def _inspect_model(args: argparse.Namespace) -> int:
 
 def _generate(args: argparse.Namespace) -> int:
     task = TaskType(args.task)
-    schedule_enabled = args.attention_backend == "anemoi-draft"
-    if args.sparsity_schedule is not None:
-        schedule = SparsityScheduleConfig.from_json_file(
-            args.sparsity_schedule,
-            enabled=schedule_enabled,
-        )
-    else:
-        schedule = SparsityScheduleConfig(
-            enabled=schedule_enabled,
-            dense_step_fraction=args.dense_step_fraction,
-            default_sparsity=args.sparsity_ratio,
-        )
-    attention = AttentionConfig(
-        backend=args.attention_backend,
-        pool_h=args.pool_h,
-        pool_w=args.pool_w,
-        schedule=schedule,
-    )
     config = EngineConfig(
         model=args.model,
         variant=args.variant,
         device=args.device,
         offload=args.offload,
-        attention=attention,
     )
     engine = AnemoiEngine(config)
     request = GenerationRequest(
@@ -208,101 +151,6 @@ def _generate(args: argparse.Namespace) -> int:
 
     artifact = engine.generate(request)
     print(str(artifact.path))
-    return 0
-
-
-def _draft_attn_smoke(args: argparse.Namespace) -> int:
-    try:
-        import torch
-    except ImportError as exc:
-        raise AdapterError("PyTorch is required for draft-attn-smoke") from exc
-
-    preset = get_preset(args.preset, full_shape=args.full_shape)
-    device = args.device
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    dtype = getattr(torch, args.dtype)
-    if device == "cpu" and dtype != torch.float32:
-        dtype = torch.float32
-
-    torch.manual_seed(args.seed)
-    if device == "cuda":
-        torch.cuda.manual_seed_all(args.seed)
-
-    sparsity_ratio = preset.sparsity_ratio if args.sparsity_ratio is None else args.sparsity_ratio
-    if args.full_mask_check:
-        sparsity_ratio = 0.0
-        args.compare_dense = True
-
-    num_heads = args.heads or preset.num_heads
-    head_dim = args.head_dim or preset.head_dim
-    seq_len = preset.visual_len + preset.text_len
-    shape = (args.batch_size, seq_len, num_heads, head_dim)
-
-    q = torch.randn(*shape, device=device, dtype=dtype)
-    k = torch.randn(*shape, device=device, dtype=dtype)
-    v = torch.randn(*shape, device=device, dtype=dtype)
-
-    config = DraftAttentionConfig(
-        latent_h=preset.latent_h,
-        latent_w=preset.latent_w,
-        visual_len=preset.visual_len,
-        text_len=preset.text_len,
-        pool_h=preset.pool_h,
-        pool_w=preset.pool_w,
-        sparsity_ratio=sparsity_ratio,
-        draft_q_chunk_size=args.draft_q_chunk_size,
-        draft_k_chunk_size=args.draft_k_chunk_size,
-        backend=args.backend,
-    )
-    attention = DraftAttention(config)
-
-    if device == "cuda":
-        torch.cuda.synchronize()
-    started = time.perf_counter()
-    output, debug = attention(q, k, v, return_debug=True)
-    if device == "cuda":
-        torch.cuda.synchronize()
-    elapsed = time.perf_counter() - started
-
-    payload: dict[str, Any] = {
-        "preset": preset.name,
-        "full_shape": args.full_shape,
-        "device": device,
-        "dtype": str(dtype).replace("torch.", ""),
-        "shape": {
-            "batch": args.batch_size,
-            "seq_len": seq_len,
-            "visual_len": preset.visual_len,
-            "text_len": preset.text_len,
-            "heads": num_heads,
-            "head_dim": head_dim,
-            "latent_h": preset.latent_h,
-            "latent_w": preset.latent_w,
-            "frames": preset.num_frames,
-        },
-        "sparsity_ratio": sparsity_ratio,
-        "output_shape": list(output.shape),
-        "elapsed_sec": elapsed,
-        "draft_density": debug.draft_density,
-        "sequence_density": debug.sequence_density,
-        "q_block_size": debug.q_block_size,
-        "k_block_size": debug.k_block_size,
-        "draft_blocks": [debug.draft_q_blocks, debug.draft_k_blocks],
-        "sequence_blocks": [debug.sequence_q_blocks, debug.sequence_k_blocks],
-        "backend": debug.backend,
-    }
-
-    if args.compare_dense:
-        dense = dense_attention_reference(q, k, v)
-        diff = (output.float() - dense.float()).abs()
-        payload["dense_compare"] = {
-            "max_abs_error": float(diff.max().item()),
-            "mean_abs_error": float(diff.mean().item()),
-        }
-
-    print(json.dumps(payload, indent=2))
     return 0
 
 

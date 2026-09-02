@@ -103,7 +103,7 @@ std::tuple<torch::Tensor, torch::Tensor> fp16_attention_forward(
 
   auto output = torch::empty_like(query);
   auto lse = torch::empty(
-      {query.size(0), query.size(1), query.size(2)},
+      {0},
       query.options().dtype(at::ScalarType::Float));
 
   c10::cuda::CUDAGuard device_guard(query.device());
@@ -117,7 +117,7 @@ std::tuple<torch::Tensor, torch::Tensor> fp16_attention_forward(
         reinterpret_cast<half*>(output.data_ptr<at::Half>()),
         nullptr, nullptr, block_ids.data_ptr<int32_t>(),
         block_counts.data_ptr<int32_t>(), nullptr, nullptr, nullptr,
-        valid_k_counts.data_ptr<int32_t>(), lse.data_ptr<float>(), 0,
+        valid_k_counts.data_ptr<int32_t>(), nullptr, 0,
         static_cast<uint32_t>(query.size(0)),
         static_cast<uint32_t>(query.size(2)),
         static_cast<uint32_t>(key.size(2)), 0,
@@ -133,7 +133,7 @@ std::tuple<torch::Tensor, torch::Tensor> fp16_attention_forward(
         reinterpret_cast<half*>(output.data_ptr<at::Half>()),
         nullptr, nullptr, block_ids.data_ptr<int32_t>(),
         block_counts.data_ptr<int32_t>(), nullptr, nullptr, nullptr,
-        valid_k_counts.data_ptr<int32_t>(), lse.data_ptr<float>(), 0,
+        valid_k_counts.data_ptr<int32_t>(), nullptr, 0,
         static_cast<uint32_t>(query.size(0)),
         static_cast<uint32_t>(query.size(2)),
         static_cast<uint32_t>(key.size(2)), 0,
@@ -319,7 +319,7 @@ std::tuple<torch::Tensor, torch::Tensor> int8_attention_forward(
 
   auto output = torch::empty_like(q16);
   auto lse = torch::empty(
-      {q16.size(0), q16.size(1), q16.size(2)},
+      {0},
       q16.options().dtype(at::ScalarType::Float));
   c10::cuda::CUDAGuard device_guard(q16.device());
   cudaStream_t stream = at::cuda::getCurrentCUDAStream(q16.get_device());
@@ -336,7 +336,7 @@ std::tuple<torch::Tensor, torch::Tensor> int8_attention_forward(
       block_ids.data_ptr<int32_t>(), fp16_block_counts.data_ptr<int32_t>(), \
       q_scale.data_ptr<float>(), k_scale.data_ptr<float>(), \
       v_scale.data_ptr<float>(), valid_k_counts.data_ptr<int32_t>(), \
-      lse.data_ptr<float>(), static_cast<uint32_t>(fp16_prefix_blocks), \
+      nullptr, static_cast<uint32_t>(fp16_prefix_blocks), \
       static_cast<uint32_t>(q16.size(0)), \
       static_cast<uint32_t>(q16.size(2)), \
       static_cast<uint32_t>(k16.size(2)), \
@@ -658,7 +658,7 @@ std::tuple<torch::Tensor, torch::Tensor> mxfp8_attention_forward(
       "inactive FP16 requires zero prefix stages");
   auto output = torch::empty_like(q_fp16);
   auto lse = torch::empty(
-      {q_fp16.size(0), q_fp16.size(1), q_fp16.size(2)},
+      {0},
       q_fp16.options().dtype(at::ScalarType::Float));
   c10::cuda::CUDAGuard device_guard(q_fp16.device());
   cudaStream_t stream = at::cuda::getCurrentCUDAStream(q_fp16.get_device());
@@ -681,7 +681,7 @@ std::tuple<torch::Tensor, torch::Tensor> mxfp8_attention_forward(
         q_mxfp8_scale.data_ptr<uint8_t>(),
         k_mxfp8_scale.data_ptr<uint8_t>(),
         v_mxfp8_scale.data_ptr<uint8_t>(),
-        valid_k_counts.data_ptr<int32_t>(), lse.data_ptr<float>(), 0,
+        valid_k_counts.data_ptr<int32_t>(), nullptr, 0,
         static_cast<uint32_t>(q_fp16.size(0)),
         static_cast<uint32_t>(q_fp16.size(2)),
         static_cast<uint32_t>(k_fp16.size(2)),
@@ -708,7 +708,7 @@ std::tuple<torch::Tensor, torch::Tensor> mxfp8_attention_forward(
         q_mxfp8_scale.data_ptr<uint8_t>(),
         k_mxfp8_scale.data_ptr<uint8_t>(),
         v_mxfp8_scale.data_ptr<uint8_t>(),
-        valid_k_counts.data_ptr<int32_t>(), lse.data_ptr<float>(),
+        valid_k_counts.data_ptr<int32_t>(), nullptr,
         static_cast<uint32_t>(fp16_prefix_blocks),
         static_cast<uint32_t>(q_fp16.size(0)),
         static_cast<uint32_t>(q_fp16.size(2)),
@@ -736,7 +736,7 @@ std::tuple<torch::Tensor, torch::Tensor> mxfp8_attention_forward(
       q_mxfp8_scale.data_ptr<uint8_t>(),
       k_mxfp8_scale.data_ptr<uint8_t>(),
       v_mxfp8_scale.data_ptr<uint8_t>(),
-      valid_k_counts.data_ptr<int32_t>(), lse.data_ptr<float>(),
+      valid_k_counts.data_ptr<int32_t>(), nullptr,
       static_cast<uint32_t>(fp16_prefix_blocks),
       static_cast<uint32_t>(q_fp16.size(0)),
       static_cast<uint32_t>(q_fp16.size(2)),
@@ -911,7 +911,7 @@ std::tuple<torch::Tensor, torch::Tensor> nvfp4_attention_forward(
 
   auto output = torch::empty_like(q_fp16);
   auto lse = torch::empty(
-      {q_fp16.size(0), q_fp16.size(1), q_fp16.size(2)},
+      {0},
       q_fp16.options().dtype(at::ScalarType::Float));
   c10::cuda::CUDAGuard device_guard(q_fp16.device());
   cudaStream_t stream = at::cuda::getCurrentCUDAStream(q_fp16.get_device());
@@ -931,7 +931,7 @@ std::tuple<torch::Tensor, torch::Tensor> nvfp4_attention_forward(
       v_nvfp4_scale.data_ptr<uint8_t>(),
       q_global_scale.data_ptr<float>(), k_global_scale.data_ptr<float>(),
       v_global_scale.data_ptr<float>(), valid_k_counts.data_ptr<int32_t>(),
-      lse.data_ptr<float>(), static_cast<uint32_t>(fp16_prefix_blocks),
+      nullptr, static_cast<uint32_t>(fp16_prefix_blocks),
       static_cast<uint32_t>(q_fp16.size(0)),
       static_cast<uint32_t>(q_fp16.size(2)),
       static_cast<uint32_t>(k_fp16.size(2)),
@@ -1113,7 +1113,7 @@ std::tuple<torch::Tensor, torch::Tensor> three_phase_forward(
       "inactive FP16 requires zero prefix stages");
   auto output = torch::empty_like(q16);
   auto lse = torch::empty(
-      {q16.size(0), q16.size(1), q16.size(2)},
+      {0},
       q16.options().dtype(at::ScalarType::Float));
   c10::cuda::CUDAGuard device_guard(q16.device());
   cudaStream_t stream = at::cuda::getCurrentCUDAStream(q16.get_device());
@@ -1132,7 +1132,7 @@ std::tuple<torch::Tensor, torch::Tensor> three_phase_forward(
       v4_scale.data_ptr<uint8_t>(), middle_counts.data_ptr<int32_t>(), \
       q_global_scale.data_ptr<float>(), k_global_scale.data_ptr<float>(), \
       v_global_scale.data_ptr<float>(), valid_k_counts.data_ptr<int32_t>(), \
-      lse.data_ptr<float>(), static_cast<uint32_t>(fp16_prefix_blocks), \
+      nullptr, static_cast<uint32_t>(fp16_prefix_blocks), \
       static_cast<uint32_t>(q16.size(0)), static_cast<uint32_t>(q16.size(2)), \
       static_cast<uint32_t>(k16.size(2)), static_cast<uint32_t>(v8.size(3)), \
       static_cast<uint32_t>(q16.size(1)), static_cast<uint32_t>(k16.size(1)), \

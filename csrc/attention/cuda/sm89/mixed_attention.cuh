@@ -586,34 +586,37 @@ void MPA_ATTENTION_KERNEL_ENTRY(
   if (__builtin_expect(
           low_iterations == 0 && initial_high_iterations == 0, false)) {
 #if defined(MPA_K64_BLOCK_MODE)
-    // Global density-matched routing is allowed to spend no stages on an
-    // individual query block.  The host intentionally allocates the output
-    // with torch::empty, so returning without a store would expose allocator
-    // history as attention output (and can surface stale NaNs on a later
-    // invocation).  An empty sparse row has a defined zero contribution; write
-    // only that CTA's rows and leave the common nonempty path unchanged.
+    // Final production output assembly owns empty-row zeroing. Preserve the
+    // legacy store shape behind a host-rejected prefix sentinel because ptxas
+    // uses this cold block while coloring the register-heavy nonempty path.
     const uint32_t query_begin = query_block * kCtaQ;
     const uint32_t query_rows =
         query_begin < qo_len ? min(kCtaQ, qo_len - query_begin) : 0;
     const uint32_t linear_thread = warp_id * 32 + lane_id;
     constexpr uint32_t threads = num_warps * 32;
-    constexpr uint32_t output_words_per_row =
-        HeadDim * sizeof(half) / sizeof(uint32_t);
-    static_assert(
-        HeadDim * sizeof(half) % sizeof(uint32_t) == 0,
-        "empty-route output must be vector aligned");
-    uint32_t* output_words = reinterpret_cast<uint32_t*>(output);
-    const uint32_t output_row =
-        (batch_id * num_qo_heads + head_id) * qo_len + query_begin;
-    const uint32_t output_word = output_row * output_words_per_row;
-    const uint32_t word_count = query_rows * output_words_per_row;
-    for (uint32_t word = linear_thread; word < word_count; word += threads) {
-      output_words[output_word + word] = 0;
+    if (__builtin_expect(fp16_prefix_stages == 0xffffffffu, false)) {
+      constexpr uint32_t output_words_per_row =
+          HeadDim * sizeof(half) / sizeof(uint32_t);
+      static_assert(
+          HeadDim * sizeof(half) % sizeof(uint32_t) == 0,
+          "empty-route output must be vector aligned");
+      uint32_t* output_words = reinterpret_cast<uint32_t*>(output);
+      const uint32_t output_row =
+          (batch_id * num_qo_heads + head_id) * qo_len + query_begin;
+      const uint32_t output_word = output_row * output_words_per_row;
+      const uint32_t word_count = query_rows * output_words_per_row;
+      for (uint32_t word = linear_thread; word < word_count; word += threads) {
+        output_words[output_word + word] = 0;
+      }
     }
 #if MPA_STORE_LSE
-    for (uint32_t row = linear_thread; row < query_rows; row += threads) {
-      lse[(batch_id * num_qo_heads + head_id) * qo_len + query_begin + row] =
-          -__int_as_float(0x7f800000);
+    // Preserve dormant LSE code shape for ptxas coloring; production sparse
+    // launches pass nullptr and execute no global LSE store.
+    if (lse != nullptr) {
+      for (uint32_t row = linear_thread; row < query_rows; row += threads) {
+        lse[(batch_id * num_qo_heads + head_id) * qo_len + query_begin + row] =
+            -__int_as_float(0x7f800000);
+      }
     }
 #endif
 #endif
@@ -667,7 +670,7 @@ void MPA_ATTENTION_KERNEL_ENTRY(
     }
   }
 #if MPA_STORE_LSE
-  if (lane_id % 4 == 0) {
+  if (lse != nullptr && lane_id % 4 == 0) {
 #pragma unroll
     for (uint32_t fq = 0; fq < num_tiles_q; ++fq) {
 #pragma unroll

@@ -40,6 +40,8 @@ class _K64Ops:
     q128_int8_attention: Callable[..., tuple[torch.Tensor, torch.Tensor]]
     smooth_int8_attention: Callable[..., tuple[torch.Tensor, torch.Tensor]]
     q128_smooth_int8_attention: Callable[..., tuple[torch.Tensor, torch.Tensor]]
+    prepare_prefix_q_int8: Callable[..., tuple[torch.Tensor, torch.Tensor]]
+    quantize_qk_int8: Callable[..., tuple[torch.Tensor, ...]]
     prefix_int8_attention: Callable[..., torch.Tensor]
     preprocess_v_fp8: Callable[..., tuple[torch.Tensor, torch.Tensor]]
     assemble_h3_output: Callable[..., torch.Tensor]
@@ -82,6 +84,10 @@ def _load_k64_ops() -> _K64Ops:
         q128_smooth_int8_attention=resolve_mixed_attention_operator(
             "q128_k64_smooth_fp8_attention_forward"
         ),
+        prepare_prefix_q_int8=resolve_mixed_attention_operator(
+            "prepare_sm89_prefix_q_int8"
+        ),
+        quantize_qk_int8=resolve_mixed_attention_operator("quantize_sm89_qk_int8"),
         prefix_int8_attention=resolve_mixed_attention_operator(
             "sm89_q64_prefix_int8_attention_forward"
         ),
@@ -131,22 +137,31 @@ def prepare_k64_fp8_operands(
         raise ValueError("query_block must be 64 or 128")
     if query_fp16.size(2) % query_block or key_fp16.size(2) % _BLOCK:
         raise ValueError("packed Q/K token capacities must be multiples of 64")
-    # Import lazily so the native K64 FP16 path does not depend on Triton.
-    # The mixed path owns this minimal quantizer and therefore does not require
-    # SpargeAttention's unrelated compiled baseline extensions.
-    from anemoi.layers.attention.mpa.backends._sm89_qk_quant import quantize_qk_k64
-
-    q8, q_scale, k8, k_scale = quantize_qk_k64(
-        query_fp16,
-        key_fp16,
-        None,
-        query_block,
-        _BLOCK,
+    q8, q_scale, k8, k_scale = _load_k64_ops().quantize_qk_int8(
+        query_fp16, key_fp16, None, query_block
     )
     _warmup_sync("Q/K quantization", query_fp16.device)
     v8, v_scale = _load_k64_ops().preprocess_v_fp8(value_fp16)
     _warmup_sync("V preprocessing", query_fp16.device)
     return q8, k8, v8, q_scale, k_scale, v_scale
+
+
+def quantize_qk_k64(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    key_mean: torch.Tensor | None = None,
+    query_block: int = _BLOCK,
+    key_block: int = _BLOCK,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Quantize contiguous FP16 Q/K using the native SM89 producer."""
+
+    if key_block != _BLOCK:
+        raise ValueError("key_block must be 64")
+    if query_block not in (_BLOCK, 2 * _BLOCK):
+        raise ValueError("query_block must be 64 or 128")
+    return _load_k64_ops().quantize_qk_int8(
+        query, key, key_mean, query_block
+    )
 
 
 def native_k64_mixed_attention(
@@ -303,13 +318,9 @@ def prepare_prefix_q_int8(
     query_bhsd: torch.Tensor,
     prefix_tokens: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Quantize only prefix Q directly from its strided source view."""
+    """Quantize prefix Q natively from its positive-stride BHSD source view."""
 
-    from anemoi.layers.attention.mpa.backends._sm89_qk_quant import (
-        quantize_prefix_q_k64,
-    )
-
-    return quantize_prefix_q_k64(query_bhsd, prefix_tokens)
+    return _load_k64_ops().prepare_prefix_q_int8(query_bhsd, prefix_tokens)
 
 
 def sm89_q64_prefix_int8_attention(
@@ -333,7 +344,7 @@ def sm89_q64_prefix_int8_attention(
         v_scale,
         valid_k_counts,
         prefix_tokens,
-        1.0 / math.sqrt(128),
+        1.0 / math.sqrt(prefix_q8.size(-1)),
     )
 
 
@@ -466,18 +477,34 @@ def assemble_h3_k64_output(
     video_inverse_indices: torch.Tensor,
     *,
     output_dtype: torch.dtype | None = None,
+    route_counts: tuple[
+        torch.Tensor, torch.Tensor, torch.Tensor | None
+    ] | None = None,
+    query_block_size: int | None = None,
 ) -> torch.Tensor:
-    """Fuse inverse-raster scatter, prefix append, dtype cast, and BSHD store."""
+    """Fuse inverse-raster scatter, prefix append, dtype cast, and BSHD store.
+
+    Route-aware callers provide at least two physical phase-count tensors. The
+    third count is optional so the two-phase SM89 path can reuse the shared
+    assembly without allocating a zero-count sentinel.
+    """
 
     if prefix_output_bhsd.dtype not in (torch.float16, torch.bfloat16):
         raise TypeError("H3 prefix output must be FP16 or BF16")
     if video_output_bhsd_fp16.dtype != torch.float16:
         raise TypeError("H3 packed video output must be FP16")
+    if route_counts is None:
+        route_counts = (None, None, None)
+        query_block_size = 0
+    elif query_block_size not in (64, 128):
+        raise ValueError("route-aware H3 assembly requires Q64 or Q128")
     return _load_k64_ops().assemble_h3_output(
         prefix_output_bhsd,
         video_output_bhsd_fp16,
         video_inverse_indices,
         output_dtype,
+        *route_counts,
+        query_block_size,
     )
 
 
@@ -513,6 +540,7 @@ __all__ = [
     "pool_compact_k64_key",
     "prepare_prefix_q_int8",
     "prepare_k64_fp8_operands",
+    "quantize_qk_k64",
     "sm89_h3_materialize_route",
     "sm89_h3_draft_probability",
     "sm89_h3_route_precision",

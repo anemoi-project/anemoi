@@ -8,6 +8,7 @@ import torch
 
 import anemoi
 from anemoi.layers.attention.mpa.backends.sm89_k64 import (
+    assemble_h3_k64_output,
     native_k64_mixed_attention,
     prepare_k64_fp8_operands,
 )
@@ -83,12 +84,32 @@ class SM89LifecycleCudaTests(unittest.TestCase):
                     )
 
                     self.assertTrue(torch.isfinite(output[:, :, :query_block]).all())
-                    empty_output = output[:, :, query_block:]
+                    output[:, :, query_block:].fill_(torch.nan)
+                    assembled = assemble_h3_k64_output(
+                        query[:, :, :0],
+                        output,
+                        torch.arange(
+                            2 * query_block,
+                            device="cuda",
+                            dtype=torch.int64,
+                        ),
+                        route_counts=(low, high, None),
+                        query_block_size=query_block,
+                    )
+                    torch.testing.assert_close(
+                        assembled[:, :query_block].permute(0, 2, 1, 3),
+                        output[:, :, :query_block],
+                        rtol=0,
+                        atol=0,
+                    )
+                    empty_output = assembled[:, query_block:]
                     self.assertTrue(
                         torch.equal(empty_output, torch.zeros_like(empty_output))
                     )
-                    self.assertTrue(torch.isfinite(lse[:, :, :query_block]).all())
-                    self.assertTrue(torch.isneginf(lse[:, :, query_block:]).all())
+                    self.assertFalse(torch.signbit(empty_output).any())
+                    self.assertTrue(lse.is_cuda)
+                    self.assertEqual(lse.dtype, torch.float32)
+                    self.assertEqual(lse.numel(), 0)
 
     @torch.inference_mode()
     def test_public_api_survives_long_lived_context_with_empty_global_rows(self) -> None:

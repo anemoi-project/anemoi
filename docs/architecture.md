@@ -31,7 +31,7 @@ original token order.
 ```text
 anemoi/
   cli/             command line tools
-  config/          engine, precision, and attention configuration
+  config/          engine and runtime precision configuration
   engine/          public engine entrypoint
   layers/          stable attention API, MPA executor, routing, and backends
   model_runner/    denoising loops and model forward dispatch
@@ -77,19 +77,6 @@ and model-owned calibration remain adapter responsibilities.
 MiniMax-H3 is the currently validated end-to-end model family on RTX 4090 and
 RTX 5090. Other compatible visual models can integrate the generic API without
 depending on the MiniMax-H3 runtime.
-
-## Legacy Draft Attention backend
-
-The generic BF16 Draft Attention implementation remains as framework
-infrastructure and a correctness/reference path. It has two separable pieces:
-
-- draft-map construction from pooled Q/K, using blockwise online softmax
-- block-sparse attention over Q/K/V from the generated block mask
-
-Its historical step-by-layer sparse schema is separate from the stable native
-MPA configuration. See [Draft Attention](draft_attention.md) for the legacy
-design and [Attention API](attention_api.md) for the current integration
-contract.
 
 ## Support levels
 

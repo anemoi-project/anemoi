@@ -64,7 +64,11 @@ routing at `0`.
 
 ## Installation
 
-Linux, an NVIDIA GPU, and a CUDA toolkit containing `nvcc` are required for the native MiniMax-H3 MPA path. We recommend Conda for environment management. The setup script creates (or updates) an environment named `anemoi`, installs the pinned MiniMax-H3 runtime dependencies, Anemoi itself, and the development tools:
+Linux, an NVIDIA GPU, and CUDA toolkit 12.4 or newer containing `nvcc` are
+required for the native MiniMax-H3 MPA path. We recommend Conda for environment
+management. The setup script creates (or updates) an environment named
+`anemoi`, installs the pinned MiniMax-H3 runtime dependencies, Anemoi itself,
+and the development tools:
 
 ```bash
 scripts/setup_conda_env.sh
@@ -105,7 +109,7 @@ By default, resources are stored under the ignored
 
 Requirements:
 
-- Linux and CUDA with `nvcc`
+- Linux and CUDA 12.4 or newer with `nvcc`
 - one or more NVIDIA GPUs
 - Conda (recommended), or Python 3.12 with `venv` support
 - network access to GitHub and Hugging Face on the first run

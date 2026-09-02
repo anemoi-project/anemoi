@@ -153,14 +153,15 @@ def anemoi_attention(
         raise ValueError("dropout_p must be 0.0")
     if is_causal:
         raise ValueError("is_causal must be False")
-    if scale is not None and not math.isclose(scale, 1.0 / math.sqrt(128)):
-        raise ValueError("scale must be None or 1/sqrt(128)")
     if not isinstance(layout, VisualLayout):
         raise TypeError("layout must be VisualLayout")
     if type(layer) is not int or layer < 0:
         raise ValueError("layer must be a nonnegative integer")
     if query.ndim != 4 or query.size(1) != layout.sequence_tokens:
         raise ValueError("Q sequence length must match layout.sequence_tokens")
+    expected_scale = 1.0 / math.sqrt(query.size(-1))
+    if scale is not None and not math.isclose(scale, expected_scale):
+        raise ValueError("scale must be None or 1/sqrt(head_dim)")
     sparse = sparse_config or SparseConfig()
     quant = quant_config or QuantConfig()
     resolved_calibration = calibration if calibration is not None else NVFP4Calibration()

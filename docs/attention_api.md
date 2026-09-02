@@ -75,7 +75,7 @@ def anemoi_attention(
 
 `query`, `key`, and `value` must:
 
-- share shape `[1, sequence_tokens, heads, 128]` in BSHD order
+- share shape `[1, sequence_tokens, heads, head_dim]` in BSHD order
 - be physically contiguous CUDA tensors on the same device
 - share `torch.float16` or `torch.bfloat16` dtype
 
@@ -101,7 +101,9 @@ first matching `SparseConfig.layer_sparsity_bands` entry; the base
 `sparsity_ratio` applies when no band matches.
 
 The stable call is inference self-attention with `attn_mask=None`,
-`dropout_p=0.0`, `is_causal=False`, and `scale=None` or `1 / sqrt(128)`. The
+`dropout_p=0.0`, `is_causal=False`, and `scale=None` or
+`1 / sqrt(head_dim)`. SM89 accepts head dimensions 64 and 128; SM120 currently
+accepts head dimension 128. The
 result has the same BSHD shape and dtype as `query`.
 
 ## ⚙️ Sparse and precision configuration
@@ -119,8 +121,8 @@ SM89 and SM120 Q64/Q128, let `w = maxpool_weight`; the independently normalized
 routing probability is
 
 ```text
-(1 - w) * softmax(Q_mean @ K_mean^T / sqrt(128))
-    + w * softmax(Q_max @ K_max^T / sqrt(128))
+(1 - w) * softmax(Q_mean @ K_mean^T / sqrt(head_dim))
+    + w * softmax(Q_max @ K_max^T / sqrt(head_dim))
 ```
 
 Mean and elementwise max descriptors use the same ragged Q/K block traversal;

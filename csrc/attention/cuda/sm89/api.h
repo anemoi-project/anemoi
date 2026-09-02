@@ -210,6 +210,23 @@ q128_k64_smooth_fp8_attention_forward(
     torch::Tensor valid_k_counts,
     double softmax_scale);
 
+// Native producer for the dense prefix-query path. It reads the caller's
+// positive-stride BHSD FP16/BF16 view directly and emits padded Q64 INT8 plus
+// one FP32 symmetric scale per physical query block.
+std::tuple<torch::Tensor, torch::Tensor> prepare_sm89_prefix_q_int8(
+    torch::Tensor query,
+    int64_t prefix_tokens);
+
+// Native contiguous-Q/K producer used by the package-level SM89 executor.
+// Q owns one scale per Q64/Q128 block and K owns one scale per K64 block.
+// Optional mean subtraction preserves the established FP16 smooth-K contract.
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+quantize_sm89_qk_int8(
+    torch::Tensor query,
+    torch::Tensor key,
+    std::optional<torch::Tensor> key_mean,
+    int64_t query_block_size);
+
 // Dense-sequential prefix-query provider using the same SM89 INT8-QK/E4M3-PV
 // phase body and the already prepared full K/V operands.
 torch::Tensor sm89_q64_prefix_int8_attention_forward(
@@ -269,7 +286,11 @@ torch::Tensor assemble_h3_k64_output(
     torch::Tensor prefix_output_bhsd,
     torch::Tensor video_output_bhsd_fp16,
     torch::Tensor video_inverse_indices,
-    std::optional<at::ScalarType> output_dtype);
+    std::optional<at::ScalarType> output_dtype,
+    std::optional<torch::Tensor> low_counts,
+    std::optional<torch::Tensor> middle_counts,
+    std::optional<torch::Tensor> high_counts,
+    int64_t query_block_size);
 
 std::tuple<torch::Tensor, torch::Tensor> preprocess_v_fp8(
     torch::Tensor value);

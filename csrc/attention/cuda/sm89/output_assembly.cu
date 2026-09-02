@@ -216,7 +216,7 @@ void assemble_fused_visual_text_output_kernel(
   }
 }
 
-template <typename PrefixT, typename OutputT>
+template <typename PrefixT, typename OutputT, bool RouteAware>
 __global__ __launch_bounds__(kThreads) void assemble_h3_k64_output_kernel(
     const PrefixT* __restrict__ prefix_output_bhsd,
     const half* __restrict__ video_output_bhsd,
@@ -230,7 +230,12 @@ __global__ __launch_bounds__(kThreads) void assemble_h3_k64_output_kernel(
     int64_t video_capacity,
     int64_t heads,
     int64_t dimension,
-    int64_t output_rows) {
+    int64_t output_rows,
+    const int* __restrict__ low_counts,
+    const int* __restrict__ middle_counts,
+    const int* __restrict__ high_counts,
+    int64_t route_rows,
+    int query_block_shift) {
   const int64_t sequence_tokens = prefix_tokens + video_tokens;
   const int warp = threadIdx.x / kWarpSize;
   const int lane = threadIdx.x % kWarpSize;
@@ -264,16 +269,79 @@ __global__ __launch_bounds__(kThreads) void assemble_h3_k64_output_kernel(
       const int64_t source_offset =
           ((batch * heads + head) * video_capacity + physical_token) *
           dimension;
-      for (int64_t column = lane; column < dimension; column += kWarpSize) {
-        if constexpr (std::is_same_v<OutputT, half>) {
-          output_bshd[output_offset + column] =
-              video_output_bhsd[source_offset + column];
-        } else {
-          output_bshd[output_offset + column] = __float2bfloat16_rn(
-              __half2float(video_output_bhsd[source_offset + column]));
+      int empty = 0;
+      if constexpr (RouteAware) {
+        if (lane == 0) {
+          const int64_t route_offset =
+              (batch * heads + head) * route_rows +
+              (physical_token >> query_block_shift);
+          empty = low_counts[route_offset] == 0 &&
+              middle_counts[route_offset] == 0 &&
+              (high_counts == nullptr || high_counts[route_offset] == 0);
+        }
+        empty = __shfl_sync(0xffffffffu, empty, 0);
+      }
+      if (empty) {
+        for (int64_t column = lane; column < dimension; column += kWarpSize) {
+          if constexpr (std::is_same_v<OutputT, half>) {
+            output_bshd[output_offset + column] = __float2half_rn(0.0f);
+          } else {
+            output_bshd[output_offset + column] = __float2bfloat16_rn(0.0f);
+          }
+        }
+      } else {
+        for (int64_t column = lane; column < dimension; column += kWarpSize) {
+          if constexpr (std::is_same_v<OutputT, half>) {
+            output_bshd[output_offset + column] =
+                video_output_bhsd[source_offset + column];
+          } else {
+            output_bshd[output_offset + column] = __float2bfloat16_rn(
+                __half2float(video_output_bhsd[source_offset + column]));
+          }
         }
       }
     }
+  }
+}
+
+template <typename PrefixT, typename OutputT>
+void launch_h3_k64_output_assembly(
+    const PrefixT* prefix_output_bhsd,
+    const half* video_output_bhsd,
+    const int64_t* video_inverse_indices,
+    OutputT* output_bshd,
+    int64_t prefix_batch_stride,
+    int64_t prefix_head_stride,
+    int64_t prefix_sequence_stride,
+    int64_t prefix_tokens,
+    int64_t video_tokens,
+    int64_t video_capacity,
+    int64_t heads,
+    int64_t dimension,
+    int64_t output_rows,
+    const int* low_counts,
+    const int* middle_counts,
+    const int* high_counts,
+    int64_t route_rows,
+    int query_block_shift,
+    bool route_aware,
+    int64_t grid_x,
+    cudaStream_t stream) {
+  if (route_aware) {
+    assemble_h3_k64_output_kernel<PrefixT, OutputT, true>
+        <<<grid_x, kThreads, 0, stream>>>(
+        prefix_output_bhsd, video_output_bhsd, video_inverse_indices,
+        output_bshd, prefix_batch_stride, prefix_head_stride,
+        prefix_sequence_stride, prefix_tokens, video_tokens, video_capacity,
+        heads, dimension, output_rows, low_counts, middle_counts, high_counts,
+        route_rows, query_block_shift);
+  } else {
+    assemble_h3_k64_output_kernel<PrefixT, OutputT, false>
+        <<<grid_x, kThreads, 0, stream>>>(
+        prefix_output_bhsd, video_output_bhsd, video_inverse_indices,
+        output_bshd, prefix_batch_stride, prefix_head_stride,
+        prefix_sequence_stride, prefix_tokens, video_tokens, video_capacity,
+        heads, dimension, output_rows, nullptr, nullptr, nullptr, 0, 0);
   }
 }
 
@@ -283,7 +351,11 @@ torch::Tensor assemble_h3_k64_output(
     torch::Tensor prefix_output_bhsd,
     torch::Tensor video_output_bhsd_fp16,
     torch::Tensor video_inverse_indices,
-    std::optional<at::ScalarType> output_dtype) {
+    std::optional<at::ScalarType> output_dtype,
+    std::optional<torch::Tensor> low_counts,
+    std::optional<torch::Tensor> middle_counts,
+    std::optional<torch::Tensor> high_counts,
+    int64_t query_block_size) {
   TORCH_CHECK(
       prefix_output_bhsd.defined() && prefix_output_bhsd.is_cuda(),
       "prefix_output_bhsd must be a defined CUDA tensor");
@@ -335,6 +407,67 @@ torch::Tensor assemble_h3_k64_output(
           video_output_bhsd_fp16.size(3) == dimension,
       "video_output_bhsd_fp16 must share B/H/D with the prefix output");
 
+  const bool has_low_counts = low_counts.has_value() && low_counts->defined();
+  const bool has_middle_counts =
+      middle_counts.has_value() && middle_counts->defined();
+  const bool has_high_counts =
+      high_counts.has_value() && high_counts->defined() &&
+      high_counts->numel() != 0;
+  const bool route_aware = has_low_counts || has_middle_counts ||
+      (high_counts.has_value() && high_counts->defined()) ||
+      query_block_size != 0;
+  int64_t route_rows = 0;
+  int query_block_shift = 0;
+  const int* low_counts_ptr = nullptr;
+  const int* middle_counts_ptr = nullptr;
+  const int* high_counts_ptr = nullptr;
+  if (route_aware) {
+    TORCH_CHECK(
+        has_low_counts && has_middle_counts,
+        "route-aware H3 assembly requires low and middle counts");
+    TORCH_CHECK(
+        query_block_size == 64 || query_block_size == 128,
+        "route-aware H3 assembly requires query_block_size 64 or 128");
+    const auto check_route_counts = [&](const torch::Tensor& counts,
+                                        const char* name) {
+      check_cuda_contiguous(counts, name);
+      TORCH_CHECK(
+          counts.scalar_type() == at::ScalarType::Int && counts.dim() == 3 &&
+              counts.size(0) == batch && counts.size(1) == heads &&
+              counts.device() == prefix_output_bhsd.device(),
+          name, " must be contiguous CUDA int32 [B,H,R] on the output device");
+    };
+    check_route_counts(*low_counts, "low_counts");
+    check_route_counts(*middle_counts, "middle_counts");
+    TORCH_CHECK(
+        middle_counts->sizes() == low_counts->sizes(),
+        "low_counts and middle_counts must have matching [B,H,R] shapes");
+    route_rows = low_counts->size(2);
+    TORCH_CHECK(route_rows > 0, "route count rows must be positive");
+    TORCH_CHECK(
+        video_capacity == checked_nonnegative_product(
+            route_rows, query_block_size, "route-aware video capacity"),
+        "video capacity must equal route rows times query_block_size");
+    if (high_counts.has_value() && high_counts->defined()) {
+      if (has_high_counts) {
+        check_route_counts(*high_counts, "high_counts");
+        TORCH_CHECK(
+            high_counts->sizes() == low_counts->sizes(),
+            "high_counts must match low_counts [B,H,R]");
+        high_counts_ptr = high_counts->data_ptr<int>();
+      } else {
+        check_cuda_contiguous(*high_counts, "high_counts");
+        TORCH_CHECK(
+            high_counts->scalar_type() == at::ScalarType::Int &&
+                high_counts->device() == prefix_output_bhsd.device(),
+            "empty high_counts must be CUDA int32 on the output device");
+      }
+    }
+    low_counts_ptr = low_counts->data_ptr<int>();
+    middle_counts_ptr = middle_counts->data_ptr<int>();
+    query_block_shift = query_block_size == 64 ? 6 : 7;
+  }
+
   c10::cuda::CUDAGuard device_guard(prefix_output_bhsd.device());
   const cudaDeviceProp* properties =
       at::cuda::getDeviceProperties(prefix_output_bhsd.get_device());
@@ -365,50 +498,51 @@ torch::Tensor assemble_h3_k64_output(
       at::cuda::getCurrentCUDAStream(prefix_output_bhsd.get_device());
   if (prefix_output_bhsd.scalar_type() == at::ScalarType::Half &&
       resolved_output_dtype == at::ScalarType::Half) {
-    assemble_h3_k64_output_kernel<half, half><<<grid_x, kThreads, 0, stream>>>(
+    launch_h3_k64_output_assembly<half, half>(
         reinterpret_cast<const half*>(prefix_output_bhsd.data_ptr<at::Half>()),
         reinterpret_cast<const half*>(video_output_bhsd_fp16.data_ptr<at::Half>()),
         video_inverse_indices.data_ptr<int64_t>(),
         reinterpret_cast<half*>(output.data_ptr<at::Half>()),
         prefix_output_bhsd.stride(0), prefix_output_bhsd.stride(1),
-        prefix_output_bhsd.stride(2),
-        prefix_tokens, video_tokens, video_capacity, heads, dimension,
-        output_rows);
+        prefix_output_bhsd.stride(2), prefix_tokens, video_tokens,
+        video_capacity, heads, dimension, output_rows, low_counts_ptr,
+        middle_counts_ptr, high_counts_ptr, route_rows, query_block_shift,
+        route_aware, grid_x, stream);
   } else if (prefix_output_bhsd.scalar_type() == at::ScalarType::Half) {
-    assemble_h3_k64_output_kernel<half, __nv_bfloat16>
-        <<<grid_x, kThreads, 0, stream>>>(
+    launch_h3_k64_output_assembly<half, __nv_bfloat16>(
         reinterpret_cast<const half*>(prefix_output_bhsd.data_ptr<at::Half>()),
         reinterpret_cast<const half*>(video_output_bhsd_fp16.data_ptr<at::Half>()),
         video_inverse_indices.data_ptr<int64_t>(),
         reinterpret_cast<__nv_bfloat16*>(output.data_ptr<at::BFloat16>()),
         prefix_output_bhsd.stride(0), prefix_output_bhsd.stride(1),
-        prefix_output_bhsd.stride(2),
-        prefix_tokens, video_tokens, video_capacity, heads, dimension,
-        output_rows);
+        prefix_output_bhsd.stride(2), prefix_tokens, video_tokens,
+        video_capacity, heads, dimension, output_rows, low_counts_ptr,
+        middle_counts_ptr, high_counts_ptr, route_rows, query_block_shift,
+        route_aware, grid_x, stream);
   } else if (resolved_output_dtype == at::ScalarType::BFloat16) {
-    assemble_h3_k64_output_kernel<__nv_bfloat16, __nv_bfloat16>
-        <<<grid_x, kThreads, 0, stream>>>(
+    launch_h3_k64_output_assembly<__nv_bfloat16, __nv_bfloat16>(
         reinterpret_cast<const __nv_bfloat16*>(
             prefix_output_bhsd.data_ptr<at::BFloat16>()),
         reinterpret_cast<const half*>(video_output_bhsd_fp16.data_ptr<at::Half>()),
         video_inverse_indices.data_ptr<int64_t>(),
         reinterpret_cast<__nv_bfloat16*>(output.data_ptr<at::BFloat16>()),
         prefix_output_bhsd.stride(0), prefix_output_bhsd.stride(1),
-        prefix_output_bhsd.stride(2),
-        prefix_tokens, video_tokens, video_capacity, heads, dimension,
-        output_rows);
+        prefix_output_bhsd.stride(2), prefix_tokens, video_tokens,
+        video_capacity, heads, dimension, output_rows, low_counts_ptr,
+        middle_counts_ptr, high_counts_ptr, route_rows, query_block_shift,
+        route_aware, grid_x, stream);
   } else {
-    assemble_h3_k64_output_kernel<__nv_bfloat16, half>
-        <<<grid_x, kThreads, 0, stream>>>(
+    launch_h3_k64_output_assembly<__nv_bfloat16, half>(
         reinterpret_cast<const __nv_bfloat16*>(
             prefix_output_bhsd.data_ptr<at::BFloat16>()),
         reinterpret_cast<const half*>(video_output_bhsd_fp16.data_ptr<at::Half>()),
         video_inverse_indices.data_ptr<int64_t>(),
         reinterpret_cast<half*>(output.data_ptr<at::Half>()),
         prefix_output_bhsd.stride(0), prefix_output_bhsd.stride(1),
-        prefix_output_bhsd.stride(2),
-        prefix_tokens, video_tokens, video_capacity, heads, dimension,
-        output_rows);
+        prefix_output_bhsd.stride(2), prefix_tokens, video_tokens,
+        video_capacity, heads, dimension, output_rows, low_counts_ptr,
+        middle_counts_ptr, high_counts_ptr, route_rows, query_block_shift,
+        route_aware, grid_x, stream);
   }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return output;

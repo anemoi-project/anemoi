@@ -6,6 +6,7 @@ from importlib.util import find_spec
 
 import torch
 
+from anemoi.layers.attention.mpa.backends.sm89_k64 import assemble_h3_k64_output
 from anemoi.layers.attention.mpa.backends.sm120_q64 import (
     prepare_h3_sm120_operands,
     sm120_q64_fp16_attention,
@@ -28,8 +29,74 @@ _EXTENSION = find_spec("anemoi.layers.attention.mpa._cuda_sm120_q64") is not Non
     "requires the native SM120 attention extension",
 )
 class SM120LifecycleCudaTests(unittest.TestCase):
+    @staticmethod
+    def _assemble_video(
+        video: torch.Tensor,
+        query_block: int,
+        low_counts: torch.Tensor,
+        middle_counts: torch.Tensor,
+        high_counts: torch.Tensor,
+    ) -> torch.Tensor:
+        video_tokens = video.size(2)
+        video_capacity = low_counts.size(2) * query_block
+        if video_tokens != video_capacity:
+            padded = torch.full(
+                (*video.shape[:2], video_capacity, video.shape[3]),
+                torch.nan,
+                device=video.device,
+                dtype=video.dtype,
+            )
+            padded[:, :, :video_tokens].copy_(video)
+            video = padded
+        output = assemble_h3_k64_output(
+            torch.zeros(
+                (*video.shape[:2], 1, video.shape[3]),
+                device=video.device,
+                dtype=video.dtype,
+            ),
+            video,
+            torch.arange(video_tokens, device=video.device, dtype=torch.int64),
+            route_counts=(low_counts, middle_counts, high_counts),
+            query_block_size=query_block,
+        )
+        return output[:, 1:]
+
     @torch.inference_mode()
-    def test_empty_route_ctas_define_output_and_lse_for_q64_tail_and_q128(self) -> None:
+    def test_empty_aware_assembly_does_not_read_poisoned_video_rows(self) -> None:
+        for query_block in (64, 128):
+            for output_dtype in (torch.float16, torch.bfloat16):
+                with self.subTest(query_block=query_block, output_dtype=output_dtype):
+                    video = torch.full(
+                        (1, 1, 2 * query_block, 128),
+                        torch.nan,
+                        device="cuda",
+                        dtype=torch.float16,
+                    )
+                    video[:, :, :query_block].fill_(1.0)
+                    counts = torch.zeros(
+                        (1, 1, 2), device="cuda", dtype=torch.int32
+                    )
+                    counts[:, :, 0] = 1
+                    output = assemble_h3_k64_output(
+                        torch.ones(
+                            (1, 1, 1, 128), device="cuda", dtype=output_dtype
+                        ),
+                        video,
+                        torch.arange(
+                            2 * query_block, device="cuda", dtype=torch.int64
+                        ),
+                        output_dtype=output_dtype,
+                        route_counts=(counts, torch.zeros_like(counts), torch.zeros_like(counts)),
+                        query_block_size=query_block,
+                    )
+                    nonempty = output[:, 1 : 1 + query_block]
+                    empty = output[:, 1 + query_block :]
+                    self.assertTrue(torch.equal(nonempty, torch.ones_like(nonempty)))
+                    self.assertTrue(torch.equal(empty, torch.zeros_like(empty)))
+                    self.assertFalse(torch.signbit(empty).any())
+
+    @torch.inference_mode()
+    def test_empty_route_ctas_define_output_and_return_empty_lse(self) -> None:
         cases = (
             (64, 96, sm120_q64_fp16_attention),
             (128, 256, sm120_q128_fp16_attention),
@@ -82,16 +149,26 @@ class SM120LifecycleCudaTests(unittest.TestCase):
                     block_counts,
                     valid_k_counts,
                 )
+                zero_counts = torch.zeros_like(block_counts)
+                final = self._assemble_video(
+                    output,
+                    query_block,
+                    zero_counts,
+                    zero_counts,
+                    block_counts,
+                )
 
-                self.assertTrue(torch.isfinite(output[:, :, :query_block]).all())
-                self.assertTrue(torch.isfinite(lse[:, :, :query_block]).all())
+                self.assertTrue(torch.isfinite(final[:, :query_block]).all())
+                self.assertTrue(lse.is_cuda)
+                self.assertEqual(lse.dtype, torch.float32)
+                self.assertEqual(lse.numel(), 0)
                 self.assertTrue(
                     torch.equal(
-                        output[:, :, query_block:],
-                        torch.zeros_like(output[:, :, query_block:]),
+                        final[:, query_block:],
+                        torch.zeros_like(final[:, query_block:]),
                     )
                 )
-                self.assertTrue(torch.isneginf(lse[:, :, query_block:]).all())
+                self.assertFalse(torch.signbit(final[:, query_block:]).any())
 
     @torch.inference_mode()
     def test_empty_route_ctas_cover_every_compiled_precision_family(self) -> None:
@@ -206,16 +283,25 @@ class SM120LifecycleCudaTests(unittest.TestCase):
                         prepared_int8_operands=prepared[17:23],
                         prepared_global_scales=scales,
                     )
+                    final = self._assemble_video(
+                        output,
+                        query_block,
+                        counts["nvfp4"],
+                        counts["int8"] + counts["mxfp8"],
+                        fp16_counts,
+                    )
 
-                    self.assertTrue(torch.isfinite(output[:, :, :query_block]).all())
-                    self.assertTrue(torch.isfinite(lse[:, :, :query_block]).all())
+                    self.assertTrue(torch.isfinite(final[:, :query_block]).all())
+                    self.assertTrue(lse.is_cuda)
+                    self.assertEqual(lse.dtype, torch.float32)
+                    self.assertEqual(lse.numel(), 0)
                     self.assertTrue(
                         torch.equal(
-                            output[:, :, query_block:],
-                            torch.zeros_like(output[:, :, query_block:]),
+                            final[:, query_block:],
+                            torch.zeros_like(final[:, query_block:]),
                         )
                     )
-                    self.assertTrue(torch.isneginf(lse[:, :, query_block:]).all())
+                    self.assertFalse(torch.signbit(final[:, query_block:]).any())
 
     @torch.inference_mode()
     def test_empty_route_output_is_stable_in_a_long_lived_context(self) -> None:
@@ -242,25 +328,31 @@ class SM120LifecycleCudaTests(unittest.TestCase):
         )
         block_counts = torch.tensor([[[2, 0]]], device="cuda", dtype=torch.int32)
         valid_k_counts = torch.full((1, 2), 64, device="cuda", dtype=torch.int32)
-        reference: tuple[torch.Tensor, torch.Tensor] | None = None
+        reference: torch.Tensor | None = None
 
         for iteration in range(iterations):
             output, lse = sm120_q64_fp16_attention(
                 query, key, value, block_ids, block_counts, valid_k_counts
             )
-            self.assertTrue(torch.isfinite(output[:, :, :64]).all())
-            self.assertTrue(torch.isfinite(lse[:, :, :64]).all())
-            self.assertTrue(torch.equal(output[:, :, 64:], torch.zeros_like(output[:, :, 64:])))
-            self.assertTrue(torch.isneginf(lse[:, :, 64:]).all())
-            actual = output.cpu(), lse.cpu()
+            zero_counts = torch.zeros_like(block_counts)
+            final = self._assemble_video(
+                output, 64, zero_counts, zero_counts, block_counts
+            )
+            self.assertTrue(torch.isfinite(final[:, :64]).all())
+            self.assertTrue(lse.is_cuda)
+            self.assertEqual(lse.dtype, torch.float32)
+            self.assertEqual(lse.numel(), 0)
+            self.assertTrue(torch.equal(final[:, 64:], torch.zeros_like(final[:, 64:])))
+            self.assertFalse(torch.signbit(final[:, 64:]).any())
+            actual = final.cpu()
             if reference is None:
                 reference = actual
             else:
                 self.assertTrue(
-                    torch.equal(actual[0], reference[0]) and torch.equal(actual[1], reference[1]),
+                    torch.equal(actual, reference),
                     f"allocator-history-dependent output at iteration {iteration}",
                 )
-            del output, lse, actual
+            del output, final, lse, actual
             churn_output = torch.full_like(query, torch.nan)
             churn_lse = torch.full(query.shape[:-1], torch.nan, device="cuda", dtype=torch.float32)
             del churn_output, churn_lse

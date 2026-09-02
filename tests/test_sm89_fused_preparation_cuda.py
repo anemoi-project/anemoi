@@ -53,6 +53,104 @@ def _quantize_reference(tensor: torch.Tensor, block: int):
 )
 class SM89FusedPreparationCudaTests(unittest.TestCase):
     @torch.inference_mode()
+    def test_d64_fused_preparation_covers_dtype_query_and_optional_modes(self) -> None:
+        prefix_tokens = 70
+        video_tokens = 134
+        for dtype in (torch.float16, torch.bfloat16):
+            for query_block in (64, 128):
+                indices, valid, counts = _layout(query_block)
+                torch.manual_seed(6400 + query_block + (dtype == torch.bfloat16))
+                shape = (1, 2, prefix_tokens + video_tokens, 64)
+                query = torch.randn(shape, device="cuda").to(dtype)
+                key = torch.randn(shape, device="cuda").to(dtype)
+                value = torch.randn(shape, device="cuda").to(dtype)
+                for smooth_k, has_maxpool in (
+                    (False, False),
+                    (False, True),
+                    (True, False),
+                ):
+                    with self.subTest(
+                        dtype=dtype,
+                        query_block=query_block,
+                        smooth_k=smooth_k,
+                        has_maxpool=has_maxpool,
+                    ):
+                        prepared = prepare_h3_sm89_int8_operands(
+                            query,
+                            key,
+                            value,
+                            indices,
+                            valid,
+                            counts,
+                            prefix_tokens=prefix_tokens,
+                            query_block_size=query_block,
+                            smooth_k=smooth_k,
+                            has_maxpool=has_maxpool,
+                        )
+                        gathered_q = torch.where(
+                            valid.view(1, 1, -1, 1),
+                            query[:, :, prefix_tokens + indices].half(),
+                            0.0,
+                        ).contiguous()
+                        gathered_k = torch.where(
+                            valid.view(1, 1, -1, 1),
+                            key[:, :, prefix_tokens + indices].half(),
+                            0.0,
+                        ).contiguous()
+                        prefix_capacity = math.ceil(prefix_tokens / 64) * 64
+                        prefix_k = torch.zeros(
+                            (1, 2, prefix_capacity, 64),
+                            device="cuda",
+                            dtype=torch.float16,
+                        )
+                        prefix_k[:, :, :prefix_tokens] = key[:, :, :prefix_tokens]
+                        expected_k = torch.cat((prefix_k, gathered_k), dim=2)
+                        self.assertTrue(torch.equal(prepared[2], gathered_q))
+                        self.assertTrue(torch.equal(prepared[3], expected_k))
+
+                        expected_q8, expected_q_scale = _quantize_reference(
+                            gathered_q, query_block
+                        )
+                        if smooth_k:
+                            key_mean = key.float().mean(2).half()
+                            row_valid = torch.cat(
+                                (
+                                    torch.arange(prefix_capacity, device="cuda")
+                                    < prefix_tokens,
+                                    valid,
+                                )
+                            ).view(1, 1, -1, 1)
+                            centered_k = torch.where(
+                                row_valid,
+                                (
+                                    expected_k.float()
+                                    - key_mean.float().unsqueeze(2)
+                                ).half(),
+                                0.0,
+                            )
+                            self.assertTrue(torch.equal(prepared[11], key_mean))
+                            expected_k8, expected_k_scale = _quantize_reference(
+                                centered_k, 64
+                            )
+                        else:
+                            expected_k8, expected_k_scale = _quantize_reference(
+                                expected_k, 64
+                            )
+                        self.assertTrue(torch.equal(prepared[5], expected_q8))
+                        self.assertTrue(torch.equal(prepared[6], expected_k8))
+                        torch.testing.assert_close(
+                            prepared[8], expected_q_scale, atol=1.0e-8, rtol=0
+                        )
+                        torch.testing.assert_close(
+                            prepared[9], expected_k_scale, atol=1.0e-8, rtol=0
+                        )
+                        self.assertEqual(prepared[7].size(2), 64)
+                        self.assertEqual(prepared[10].shape, (1, 2, 64))
+                        self.assertEqual(
+                            prepared[12].numel() > 0, has_maxpool
+                        )
+
+    @torch.inference_mode()
     def test_single_load_q64_q128_matches_unfused_numerical_contract(self) -> None:
         torch.manual_seed(17)
         prefix_tokens = 70
@@ -204,7 +302,7 @@ class SM89FusedPreparationCudaTests(unittest.TestCase):
                         torch.testing.assert_close(actual, expected, atol=5e-4, rtol=0)
 
     @torch.inference_mode()
-    def test_k_smooth_centers_only_valid_rows_and_restores_pure_lse(self) -> None:
+    def test_k_smooth_centers_only_valid_rows_with_empty_lse_sentinel(self) -> None:
         torch.manual_seed(29)
         prefix_tokens = 70
         video_tokens = 134
@@ -282,7 +380,7 @@ class SM89FusedPreparationCudaTests(unittest.TestCase):
                 else:
                     halves = video_counts.flatten()
                 valid_k = torch.cat((prefix_counts, halves)).view(1, -1)
-                _, lse = native_k64_mixed_attention(
+                pure_output, lse = native_k64_mixed_attention(
                     packed_q,
                     packed_k,
                     prepared[4],
@@ -319,8 +417,22 @@ class SM89FusedPreparationCudaTests(unittest.TestCase):
                 score.masked_fill_(
                     ~(positions < stage_valid).view(1, 1, 1, -1), -torch.inf
                 )
-                expected_lse = torch.logsumexp(score, dim=-1)
-                torch.testing.assert_close(lse, expected_lse, atol=1.5e-5, rtol=0)
+                self.assertTrue(lse.is_cuda)
+                self.assertEqual(lse.dtype, torch.float32)
+                self.assertEqual(lse.numel(), 0)
+                pure_value = (
+                    v8.float().transpose(-1, -2)
+                    * v_scale.float().unsqueeze(2)
+                )[:, :, : score.size(-1)]
+                expected_pure_output = torch.matmul(
+                    torch.softmax(score, dim=-1), pure_value
+                )
+                torch.testing.assert_close(
+                    pure_output.float(),
+                    expected_pure_output,
+                    atol=3.0e-2,
+                    rtol=3.0e-2,
+                )
 
                 low_blocks = key_blocks // 2
                 low_counts = torch.full_like(route_counts, low_blocks)
@@ -361,10 +473,9 @@ class SM89FusedPreparationCudaTests(unittest.TestCase):
                 mixed_score.masked_fill_(
                     ~(positions < stage_valid).view(1, 1, 1, -1), -torch.inf
                 )
-                expected_mixed_lse = torch.logsumexp(mixed_score, dim=-1)
-                torch.testing.assert_close(
-                    mixed_lse, expected_mixed_lse, atol=2.0e-3, rtol=2.0e-4
-                )
+                self.assertTrue(mixed_lse.is_cuda)
+                self.assertEqual(mixed_lse.dtype, torch.float32)
+                self.assertEqual(mixed_lse.numel(), 0)
 
                 low_value = (
                     v8.float().transpose(-1, -2)

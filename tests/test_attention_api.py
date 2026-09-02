@@ -3,6 +3,8 @@ from __future__ import annotations
 import inspect
 import unittest
 from dataclasses import fields
+from importlib.util import find_spec
+from pathlib import Path
 from unittest.mock import patch
 
 import torch
@@ -22,6 +24,45 @@ class AttentionAPITests(unittest.TestCase):
         self.assertNotIn("prefix_tokens", signature.parameters)
         self.assertNotIn("video_shape", signature.parameters)
         self.assertNotIn("anemoi.models.minimax_h3", source)
+
+    def test_legacy_draft_fallback_is_not_packaged_or_exposed(self) -> None:
+        from anemoi.cli.main import build_parser
+        from anemoi.layers import attention
+
+        for name in (
+            "AttentionBackend",
+            "DraftAttention",
+            "DraftAttentionConfig",
+            "DraftMap",
+            "block_sparse_attention",
+        ):
+            self.assertFalse(hasattr(attention, name), name)
+        for module in (
+            "anemoi.layers.attention.draft_attention",
+            "anemoi.layers.attention.sparse_attention",
+            "anemoi.layers.attention.triton.block_sparse_attention",
+        ):
+            self.assertIsNone(find_spec(module), module)
+
+        parser = build_parser()
+        help_text = parser.format_help()
+        self.assertNotIn("draft-attn-smoke", help_text)
+        generate = next(
+            action for action in parser._actions if action.dest == "==SUPPRESS=="
+        )
+        generate_parser = generate.choices["generate"]
+        generate_help = generate_parser.format_help()
+        self.assertNotIn("--attention-backend", generate_help)
+        self.assertNotIn("--sparsity-schedule", generate_help)
+
+    def test_stable_attention_package_has_no_triton_import(self) -> None:
+        package = Path(__file__).resolve().parents[1] / "anemoi/layers/attention"
+        offenders = [
+            path.relative_to(package).as_posix()
+            for path in package.rglob("*.py")
+            if "import triton" in path.read_text()
+        ]
+        self.assertEqual(offenders, [])
 
     def test_nvfp4_calibration_defaults_and_rejects_invalid_scales(self) -> None:
         self.assertEqual(anemoi.NVFP4Calibration().scales, (1.0, 1.0, 1.0))
@@ -355,6 +396,42 @@ class AttentionAPITests(unittest.TestCase):
             )
         self.assertIs(q128_result, output)
         self.assertEqual(operation.call_args.kwargs["query_block_size"], 128)
+
+    def test_sm89_public_entry_accepts_d64_and_uses_dynamic_scale(self) -> None:
+        from anemoi.layers.attention.mpa import executor
+
+        query = torch.empty((1, 192, 1, 64), dtype=torch.float16)
+        output = torch.empty_like(query)
+        with (
+            patch("torch.cuda.get_device_capability", return_value=(8, 9)),
+            patch.object(
+                executor, "sm89_ragged_h3_attention", return_value=output
+            ) as operation,
+        ):
+            result = anemoi.anemoi_attention(
+                query,
+                query,
+                query,
+                layout=anemoi.VisualLayout(
+                    video_shape=(1, 1, 128), prefix_tokens=64
+                ),
+                layer=2,
+                scale=1.0 / 8.0,
+            )
+        self.assertIs(result, output)
+        operation.assert_called_once()
+
+        with self.assertRaisesRegex(ValueError, "sqrt.head_dim"):
+            anemoi.anemoi_attention(
+                query,
+                query,
+                query,
+                layout=anemoi.VisualLayout(
+                    video_shape=(1, 1, 128), prefix_tokens=64
+                ),
+                layer=2,
+                scale=1.0 / (128**0.5),
+            )
 
 
 if __name__ == "__main__":

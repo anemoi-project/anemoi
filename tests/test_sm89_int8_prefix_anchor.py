@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+import re
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -13,6 +14,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SM89Int8PrefixBackendTests(unittest.TestCase):
+    def test_prefix_producer_dispatches_only_to_the_native_operator(self) -> None:
+        from anemoi.layers.attention.mpa.backends import sm89_k64
+
+        operation = Mock(return_value=("q8", "scale"))
+        ops = SimpleNamespace(prepare_prefix_q_int8=operation)
+        query = torch.empty((1, 2, 95, 64), dtype=torch.float16)
+
+        with patch.object(sm89_k64, "_load_k64_ops", return_value=ops):
+            result = sm89_k64.prepare_prefix_q_int8(query, 95)
+
+        self.assertEqual(result, ("q8", "scale"))
+        operation.assert_called_once_with(query, 95)
+
     def test_prefix_wrapper_reuses_shared_k_and_v_operands(self) -> None:
         from anemoi.layers.attention.mpa.backends import sm89_k64
 
@@ -229,20 +243,88 @@ class SM89Int8PrefixBackendTests(unittest.TestCase):
         prefix = torch.empty((1, 2, 64, 128), dtype=torch.bfloat16)
         video = torch.empty((1, 2, 64, 128), dtype=torch.float16)
         inverse = torch.arange(64, dtype=torch.int64)
+        counts = (
+            torch.zeros((1, 2, 1), dtype=torch.int32),
+            torch.zeros((1, 2, 1), dtype=torch.int32),
+            None,
+        )
 
         with patch.object(sm89_k64, "_load_k64_ops", return_value=ops):
             result = sm89_k64.assemble_h3_k64_output(
-                prefix, video, inverse, output_dtype=torch.bfloat16
+                prefix,
+                video,
+                inverse,
+                output_dtype=torch.bfloat16,
+                route_counts=counts,
+                query_block_size=64,
             )
 
         self.assertEqual(result, "output")
         self.assertEqual(
             operation.call_args.args,
-            (prefix, video, inverse, torch.bfloat16),
+            (prefix, video, inverse, torch.bfloat16, *counts, 64),
+        )
+
+        operation.reset_mock()
+        with patch.object(sm89_k64, "_load_k64_ops", return_value=ops):
+            sm89_k64.assemble_h3_k64_output(prefix, video, inverse)
+        self.assertEqual(
+            operation.call_args.args,
+            (prefix, video, inverse, None, None, None, None, 0),
         )
 
 
 class SM89Int8PrefixBuildTests(unittest.TestCase):
+    def test_sm89_empty_output_cleanup_is_owned_by_final_assembly(self) -> None:
+        executor = (
+            ROOT / "anemoi/layers/attention/mpa/executor.py"
+        ).read_text()
+        mainloop = (
+            ROOT / "csrc/attention/cuda/sm89/mixed_attention.cuh"
+        ).read_text()
+
+        self.assertIn(
+            "route_counts=(fp8_counts, fp16_counts, None)", executor
+        )
+        empty_start = mainloop.index("if (__builtin_expect(")
+        empty_end = mainloop.index("const float base2_softmax_scale", empty_start)
+        empty_path = mainloop[empty_start:empty_end]
+        self.assertIn("return;", empty_path)
+        self.assertIn("fp16_prefix_stages == 0xffffffffu", empty_path)
+        self.assertIn("output_words", empty_path)
+        self.assertIn("lse[", empty_path)
+
+        host_source = (
+            ROOT / "csrc/attention/cuda/sm89/k64_attention_host.cu"
+        ).read_text()
+        self.assertIn(
+            "fp16_prefix_blocks >= 0 && fp16_prefix_blocks <= key_blocks",
+            host_source,
+        )
+
+    def test_sm89_sparse_attention_disables_lse_writeback_at_runtime(self) -> None:
+        kernel = (
+            ROOT / "csrc/attention/cuda/sm89/mixed_attention.cuh"
+        ).read_text()
+        host = (
+            ROOT / "csrc/attention/cuda/sm89/k64_attention_host.cu"
+        ).read_text()
+
+        self.assertGreaterEqual(kernel.count("lse != nullptr"), 2)
+        self.assertIn("lse[(batch_id * num_qo_heads", kernel)
+        self.assertNotIn("lse.data_ptr", host)
+        self.assertGreaterEqual(
+            len(re.findall(
+                r"valid_k_counts\.data_ptr<int32_t>\(\),\s*nullptr,", host
+            )),
+            6,
+        )
+        self.assertEqual(
+            len(re.findall(r"auto lse = torch::empty\(\s*\{0\},", host)),
+            3,
+        )
+        self.assertNotIn("add_smoothed_lse_offset_kernel", host)
+
     def test_sm89_build_registers_route_and_dense_prefix_sources(self) -> None:
         setup = (ROOT / "setup.py").read_text()
         api = (ROOT / "csrc/attention/cuda/sm89/api.h").read_text()
@@ -253,7 +335,15 @@ class SM89Int8PrefixBuildTests(unittest.TestCase):
         for source in (api, bindings):
             self.assertIn("sm89_h3_route_precision", source)
             self.assertIn("sm89_h3_materialize_route", source)
+            self.assertIn("prepare_sm89_prefix_q_int8", source)
             self.assertIn("sm89_q64_prefix_int8_attention", source)
+
+        backend = (
+            ROOT / "anemoi/layers/attention/mpa/backends/sm89_k64.py"
+        ).read_text()
+        producer_start = backend.index("def prepare_prefix_q_int8(")
+        producer_end = backend.index("\ndef sm89_q64_prefix_int8_attention(", producer_start)
+        self.assertNotIn("_sm89_qk_quant", backend[producer_start:producer_end])
 
     def test_sm89_route_reuses_the_verified_native_algorithm(self) -> None:
         route = (ROOT / "csrc/attention/cuda/sm89/h3_route_precision.cu").read_text()
@@ -292,6 +382,50 @@ class SM89NativeRouteParityTests(unittest.TestCase):
             sm89_k64._load_k64_ops()
         except (ImportError, OSError, RuntimeError) as exc:
             raise unittest.SkipTest(f"SM89 extension is unavailable: {exc}") from exc
+
+    def test_native_prefix_quantization_matches_the_frozen_contract(self) -> None:
+        from anemoi.layers.attention.mpa.backends.sm89_k64 import (
+            prepare_prefix_q_int8,
+        )
+
+        prefix_tokens = 95
+        for dtype in (torch.float16, torch.bfloat16):
+            for head_dim in (64, 128):
+                with self.subTest(dtype=dtype, head_dim=head_dim):
+                    torch.manual_seed(1000 + head_dim)
+                    source = torch.randn(
+                        (2, prefix_tokens + 7, 3, head_dim),
+                        device="cuda",
+                        dtype=dtype,
+                    )
+                    query = source.permute(0, 2, 1, 3)
+                    actual, scales = prepare_prefix_q_int8(query, prefix_tokens)
+                    expected_values = torch.zeros(
+                        (2, 3, 128, head_dim),
+                        device="cuda",
+                        dtype=torch.float32,
+                    )
+                    expected_values[:, :, :prefix_tokens] = query[
+                        :, :, :prefix_tokens
+                    ].float()
+                    blocks = expected_values.view(2, 3, 2, 64, head_dim)
+                    expected_scales = (
+                        blocks.abs().amax(dim=(-1, -2)) / 127.0 + 1.0e-7
+                    )
+                    scaled = blocks / expected_scales[..., None, None]
+                    expected = (
+                        scaled
+                        + 0.5 * torch.where(scaled >= 0, 1, -1)
+                    ).to(torch.int8).view_as(actual)
+
+                    torch.testing.assert_close(
+                        scales, expected_scales, rtol=2.0e-6, atol=1.0e-7
+                    )
+                    self.assertTrue(torch.equal(actual, expected))
+                    self.assertEqual(
+                        torch.count_nonzero(actual[:, :, prefix_tokens:]).item(),
+                        0,
+                    )
 
     def test_native_anchor_route_matches_eager_active_contract(self) -> None:
         from anemoi.layers.attention.mpa.backends.sm89_k64 import (

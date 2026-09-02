@@ -24,9 +24,6 @@ runtime = [
   "torch>=2.4",
   "transformers>=4.50",
 ]
-kernels = [
-  "triton>=3.0; platform_system == 'Linux'",
-]
 minimax-h3 = [
   "accelerate==1.14.0",
   "av==18.0.0",
