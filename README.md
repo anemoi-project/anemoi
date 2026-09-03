@@ -245,4 +245,4 @@ The remaining model registry and generic Draft Attention implementation are kept
 - Nanjing University
 
 ## Acknowledgement
-Currently, this repo is mainly contributed by [Rui Ding](https://openreview.net/profile?id=~Rui_Ding15) and [Weize Ma](https://openreview.net/profile?id=~Weize_Ma1) from Nanjing University. The Draft Attention design comes from [Xuan Shen](https://shawnricecake.github.io/) from Zhejiang University.
+Currently, this repo is mainly contributed by [Rui Ding](https://openreview.net/profile?id=~Rui_Ding15) and [Weize Ma](https://openreview.net/profile?id=~Weize_Ma1) from Nanjing University. The Draft Attention design is proposed by [Xuan Shen](https://shawnricecake.github.io/) from Zhejiang University and [Jiuxiang Gu](https://gujiuxiang.com/).
