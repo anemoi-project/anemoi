@@ -112,17 +112,17 @@ class SM120PhaseComposerTests(unittest.TestCase):
         self.assertIn("launch_mixed_attention_sm120_q64_int8", declarations)
         self.assertIn("launch_mixed_attention_sm120_q64_int8_fp16", declarations)
         self.assertIn(
-            "launch_mixed_attention_sm120_q64_int8<128, true, false, false>",
+            "launch_mixed_attention_sm120_q64_int8<HeadDim, true, false, false>",
             host,
         )
         self.assertIn(
-            "launch_mixed_attention_sm120_q64_int8_fp16<128, true, true, false>",
+            "launch_mixed_attention_sm120_q64_int8_fp16<HeadDim, true, true, false>",
             host,
         )
         q128_launcher = "launch_mixed_attention_sm120_q128_int8"
         self.assertIn(q128_launcher, declarations)
-        self.assertIn(f"{q128_launcher}<128, true, false, false>", host)
-        self.assertIn(f"{q128_launcher}<128, true, true, false>", host)
+        self.assertIn(f"{q128_launcher}<HeadDim, true, false, false>", host)
+        self.assertIn(f"{q128_launcher}<HeadDim, true, true, false>", host)
         self.assertIn("bool active_fp16 = true", api)
         self.assertIn("bool active_fp16=True", bindings)
         self.assertIn("fp16_block_counts.numel() == 0", host)
@@ -262,8 +262,8 @@ class SM120PhaseComposerTests(unittest.TestCase):
                 f"launch_mixed_attention_sm120_q{query_block}_nv_int8_fp16",
             ):
                 self.assertIn(launcher, declarations)
-                self.assertIn(f"{launcher}<128, true, false, false>", host)
-                self.assertIn(f"{launcher}<128, true, true, false>", host)
+                self.assertIn(f"{launcher}<HeadDim, true, false, false>", host)
+                self.assertIn(f"{launcher}<HeadDim, true, true, false>", host)
         self.assertIn("bool active_fp16 = true", api)
         self.assertIn("bool active_fp16=True", bindings)
 
@@ -302,8 +302,8 @@ class SM120PhaseComposerTests(unittest.TestCase):
                 f"launch_mixed_attention_sm120_q{query_block}_nv_mx_fp16",
             ):
                 self.assertIn(launcher, declarations)
-                self.assertIn(f"{launcher}<128, true, false, false>", host)
-                self.assertIn(f"{launcher}<128, true, true, false>", host)
+                self.assertIn(f"{launcher}<HeadDim, true, false, false>", host)
+                self.assertIn(f"{launcher}<HeadDim, true, true, false>", host)
         for text in (SOURCE.read_text(), host, api, bindings, setup):
             self.assertNotIn("MPA_AUDIT_PURE_MX", text)
             self.assertNotIn("mxfp8_pure_audit", text)

@@ -117,6 +117,7 @@ def _extensions():
         )
 
     if "sm120_q64" in components:
+        # Each phase translation unit instantiates both D64 and D128.
         attention = ROOT / "csrc" / "attention" / "cuda"
         sm120 = attention / "sm120"
         common = attention / "common"

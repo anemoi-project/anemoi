@@ -102,8 +102,7 @@ first matching `SparseConfig.layer_sparsity_bands` entry; the base
 
 The stable call is inference self-attention with `attn_mask=None`,
 `dropout_p=0.0`, `is_causal=False`, and `scale=None` or
-`1 / sqrt(head_dim)`. SM89 accepts head dimensions 64 and 128; SM120 currently
-accepts head dimension 128. The
+`1 / sqrt(head_dim)`. SM89 and SM120 both accept head dimensions 64 and 128. The
 result has the same BSHD shape and dtype as `query`.
 
 ## ⚙️ Sparse and precision configuration

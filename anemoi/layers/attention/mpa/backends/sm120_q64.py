@@ -285,7 +285,7 @@ def sm120_q64_prefix_int8_attention(
         v_scale,
         valid_k_counts,
         prefix_tokens,
-        1.0 / math.sqrt(128),
+        1.0 / math.sqrt(prefix_q8.size(-1)),
     )
 
 

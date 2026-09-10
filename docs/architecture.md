@@ -54,7 +54,8 @@ tests/            unit and smoke tests
 ## Native mixed-precision attention
 
 SM89 Q64/Q128 and SM120 Q64/Q128 are the current production native paths. They
-support structured visual-only and packed prefix-plus-video attention. The
+support head dimensions 64/128 and structured visual-only or packed
+prefix-plus-video attention. The
 stable precision cells cover INT8 and FP16 on SM89, and NVFP4, INT8, and FP16
 combinations on SM120. Runtime validation rejects unsupported architecture,
 query geometry, prefix precision, and retained-block precision combinations

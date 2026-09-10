@@ -22,6 +22,19 @@ template void launch_mixed_attention_sm120_q64<128, true, true, false>(
     const int32_t*, float*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
     uint32_t, uint32_t, float, cudaStream_t);
 
+// D64 uses the same phase implementation with half the channels.
+template void launch_mixed_attention_sm120_q64<64, true, false, false>(
+    int8_t*, int8_t*, __nv_fp8_e4m3*, half*, half*, half*, half*, half*,
+    int32_t*, int32_t*, int32_t*, int32_t*, uint8_t*, uint8_t*, uint8_t*,
+    const int32_t*, float*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
+    uint32_t, uint32_t, float, cudaStream_t);
+
+template void launch_mixed_attention_sm120_q64<64, true, true, false>(
+    int8_t*, int8_t*, __nv_fp8_e4m3*, half*, half*, half*, half*, half*,
+    int32_t*, int32_t*, int32_t*, int32_t*, uint8_t*, uint8_t*, uint8_t*,
+    const int32_t*, float*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
+    uint32_t, uint32_t, float, cudaStream_t);
+
 std::vector<int64_t> sm120_q64_mxfp8_kernel_metadata() {
   constexpr int kThreads = 128;
   constexpr int kDynamicSmemBytes = 32768;

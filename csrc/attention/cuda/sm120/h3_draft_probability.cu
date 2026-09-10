@@ -31,6 +31,7 @@
 #include <math_constants.h>
 
 #include <cmath>
+#include <type_traits>
 #include <cstdint>
 #include <limits>
 #include <utility>
@@ -45,7 +46,6 @@ constexpr int kSoftmaxWarps = kSoftmaxThreads / kWarpSize;
 constexpr int kKTailThreads = 256;
 constexpr int kKTailWarps = kKTailThreads / kWarpSize;
 constexpr int kKTailTokens = 64;
-constexpr int kKTailHeadDim = 128;
 constexpr int64_t kMaxGridX = 2147483647LL;
 constexpr cublasComputeType_t kDraftComputeType = CUBLAS_COMPUTE_32F;
 constexpr cublasGemmAlgo_t kDraftAlgorithm = CUBLAS_GEMM_DEFAULT_TENSOR_OP;
@@ -221,7 +221,7 @@ void row_softmax_fusion_fp16_kernel(
   }
 }
 
-template <int TailCount>
+template <int TailCount, int HeadDim>
 __global__ __launch_bounds__(kKTailThreads) void k_tail_descriptor_kernel(
     const half* __restrict__ k_pool,
     const half* __restrict__ packed_k,
@@ -234,10 +234,10 @@ __global__ __launch_bounds__(kKTailThreads) void k_tail_descriptor_kernel(
   const int64_t packed_blocks = prefix_blocks + blocks;
   const int64_t packed_block =
       (head_block / blocks) * packed_blocks + prefix_blocks + logical_block;
-  const int64_t mean_base = head_block * kKTailHeadDim;
-  const int64_t packed_base = packed_block * kKTailTokens * kKTailHeadDim;
+  const int64_t mean_base = head_block * HeadDim;
+  const int64_t packed_base = packed_block * kKTailTokens * HeadDim;
   const int64_t descriptor_base =
-      head_block * (TailCount + 1) * kKTailHeadDim;
+      head_block * (TailCount + 1) * HeadDim;
   const int count = valid_counts[logical_block];
   const int warp = threadIdx.x / kWarpSize;
   const int lane = threadIdx.x % kWarpSize;
@@ -250,10 +250,10 @@ __global__ __launch_bounds__(kKTailThreads) void k_tail_descriptor_kernel(
     float distance = 0.0f;
     if (token < count) {
 #pragma unroll
-      for (int element = 0; element < 4; ++element) {
-        const int channel = lane * 4 + element;
+      for (int element = 0; element < HeadDim / kWarpSize; ++element) {
+        const int channel = lane * (HeadDim / kWarpSize) + element;
         const float delta =
-            __half2float(packed_k[packed_base + token * kKTailHeadDim + channel]) -
+            __half2float(packed_k[packed_base + token * HeadDim + channel]) -
             __half2float(k_pool[mean_base + channel]);
         distance += delta * delta;
       }
@@ -293,14 +293,14 @@ __global__ __launch_bounds__(kKTailThreads) void k_tail_descriptor_kernel(
   }
   __syncthreads();
 
-  if (threadIdx.x < kKTailHeadDim) {
+  if (threadIdx.x < HeadDim) {
     const int channel = threadIdx.x;
     descriptors[descriptor_base + channel] = k_pool[mean_base + channel];
-    descriptors[descriptor_base + kKTailHeadDim + channel] =
-        packed_k[packed_base + extremes[0] * kKTailHeadDim + channel];
+    descriptors[descriptor_base + HeadDim + channel] =
+        packed_k[packed_base + extremes[0] * HeadDim + channel];
     if constexpr (TailCount == 2) {
-      descriptors[descriptor_base + 2 * kKTailHeadDim + channel] =
-          packed_k[packed_base + extremes[1] * kKTailHeadDim + channel];
+      descriptors[descriptor_base + 2 * HeadDim + channel] =
+          packed_k[packed_base + extremes[1] * HeadDim + channel];
     }
   }
 }
@@ -716,10 +716,10 @@ torch::Tensor k_tail_probability_impl(
       q_pool.size(2) == k_pool.size(2),
       "K-tail Q/K pool row dimensions must match");
   TORCH_CHECK(
-      q_pool.size(3) == kKTailHeadDim &&
-          k_pool.size(3) == kKTailHeadDim &&
-          packed_k.size(3) == kKTailHeadDim,
-      "K-tail requires head dimension 128");
+      (q_pool.size(3) == 64 || q_pool.size(3) == 128) &&
+          k_pool.size(3) == q_pool.size(3) &&
+          packed_k.size(3) == q_pool.size(3),
+      "K-tail requires matching head dimensions in {64,128}");
   TORCH_CHECK(prefix_blocks >= 0, "prefix_blocks must be nonnegative");
   TORCH_CHECK(
       valid_counts.defined() && valid_counts.is_cuda() &&
@@ -772,19 +772,27 @@ torch::Tensor k_tail_probability_impl(
       at::cuda::getCurrentCUDAStream(q_pool.get_device());
 
   auto descriptors = torch::empty(
-      {k_pool.size(0), k_pool.size(1), expanded_rows, kKTailHeadDim},
+      {k_pool.size(0), k_pool.size(1), expanded_rows, q_pool.size(3)},
       k_pool.options());
-  k_tail_descriptor_kernel<TailCount><<<
-      static_cast<unsigned int>(descriptor_blocks),
-      kKTailThreads,
-      0,
-      stream>>>(
-      reinterpret_cast<const half*>(k_pool.data_ptr<at::Half>()),
-      reinterpret_cast<const half*>(packed_k.data_ptr<at::Half>()),
-      valid_counts.data_ptr<int32_t>(),
-      reinterpret_cast<half*>(descriptors.data_ptr<at::Half>()),
-      blocks,
-      prefix_blocks);
+  const auto launch_descriptor = [&](auto head_dim_tag) {
+    constexpr int HeadDim = decltype(head_dim_tag)::value;
+    k_tail_descriptor_kernel<TailCount, HeadDim><<<
+        static_cast<unsigned int>(descriptor_blocks),
+        kKTailThreads,
+        0,
+        stream>>>(
+        reinterpret_cast<const half*>(k_pool.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(packed_k.data_ptr<at::Half>()),
+        valid_counts.data_ptr<int32_t>(),
+        reinterpret_cast<half*>(descriptors.data_ptr<at::Half>()),
+        blocks,
+        prefix_blocks);
+  };
+  if (q_pool.size(3) == 64) {
+    launch_descriptor(std::integral_constant<int, 64>{});
+  } else {
+    launch_descriptor(std::integral_constant<int, 128>{});
+  }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
 
   auto expanded_logits = torch::empty(

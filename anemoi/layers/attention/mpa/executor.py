@@ -901,11 +901,11 @@ def sm120_ragged_h3_attention(
     if profile_nvtx:
         torch.cuda.nvtx.range_push("anemoi.complete")
     if q_bshd.shape != k_bshd.shape or q_bshd.shape != v_bshd.shape:
-        raise ValueError("Q/K/V must share [1,S,H,128]")
+        raise ValueError("Q/K/V must share [1,S,H,D], D in {64,128}")
     if (
         q_bshd.ndim != 4
         or q_bshd.size(0) != 1
-        or q_bshd.size(-1) != 128
+        or q_bshd.size(-1) not in (64, 128)
         or q_bshd.dtype not in (torch.float16, torch.bfloat16)
         or k_bshd.dtype != q_bshd.dtype
         or v_bshd.dtype != q_bshd.dtype
@@ -913,7 +913,7 @@ def sm120_ragged_h3_attention(
         or k_bshd.device != q_bshd.device
         or v_bshd.device != q_bshd.device
     ):
-        raise ValueError("Q/K/V must be same-dtype CUDA [1,S,H,128]")
+        raise ValueError("Q/K/V must be same-dtype CUDA [1,S,H,D], D in {64,128}")
     if torch.cuda.get_device_capability(q_bshd.device) != (12, 0):
         raise RuntimeError("the microscaling path requires SM120")
     if query_block_size not in (64, 128):

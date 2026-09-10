@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <tuple>
+#include <type_traits>
 
 #include "api.h"
 #include "q64_attention_decl.cuh"
@@ -71,8 +72,8 @@ std::tuple<torch::Tensor, torch::Tensor> fp16_attention_forward(
   TORCH_CHECK(key.size(0) == query.size(0), "query/key batch mismatch");
   TORCH_CHECK(key.size(2) > 0 && key.size(2) % 64 == 0,
               "K must be a positive multiple of 64 physical slots");
-  TORCH_CHECK(query.size(3) == 128 && key.size(3) == 128,
-              "native K64 attention requires head_dim=128");
+  TORCH_CHECK((query.size(3) == 64 || query.size(3) == 128) && key.size(3) == query.size(3),
+              "native K64 attention requires head_dim in {64,128}");
   TORCH_CHECK(query.size(1) % key.size(1) == 0,
               "query heads must be divisible by KV heads");
   TORCH_CHECK(
@@ -108,38 +109,46 @@ std::tuple<torch::Tensor, torch::Tensor> fp16_attention_forward(
 
   c10::cuda::CUDAGuard device_guard(query.device());
   cudaStream_t stream = at::cuda::getCurrentCUDAStream(query.get_device());
-  if constexpr (QueryBlock == 64) {
-    launch_mixed_attention_sm120_q64<128, false, true, false>(
-        nullptr, nullptr, nullptr,
-        reinterpret_cast<half*>(query.data_ptr<at::Half>()),
-        reinterpret_cast<half*>(key.data_ptr<at::Half>()),
-        reinterpret_cast<half*>(value.data_ptr<at::Half>()), nullptr,
-        reinterpret_cast<half*>(output.data_ptr<at::Half>()),
-        nullptr, nullptr, block_ids.data_ptr<int32_t>(),
-        block_counts.data_ptr<int32_t>(), nullptr, nullptr, nullptr,
-        valid_k_counts.data_ptr<int32_t>(), nullptr, 0,
-        static_cast<uint32_t>(query.size(0)),
-        static_cast<uint32_t>(query.size(2)),
-        static_cast<uint32_t>(key.size(2)), 0,
-        static_cast<uint32_t>(query.size(1)),
-        static_cast<uint32_t>(key.size(1)),
-        static_cast<float>(softmax_scale), stream);
+  const auto launch = [&](auto head_dim_tag) {
+    constexpr uint32_t HeadDim = decltype(head_dim_tag)::value;
+    if constexpr (QueryBlock == 64) {
+      launch_mixed_attention_sm120_q64<HeadDim, false, true, false>(
+          nullptr, nullptr, nullptr,
+          reinterpret_cast<half*>(query.data_ptr<at::Half>()),
+          reinterpret_cast<half*>(key.data_ptr<at::Half>()),
+          reinterpret_cast<half*>(value.data_ptr<at::Half>()), nullptr,
+          reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+          nullptr, nullptr, block_ids.data_ptr<int32_t>(),
+          block_counts.data_ptr<int32_t>(), nullptr, nullptr, nullptr,
+          valid_k_counts.data_ptr<int32_t>(), nullptr, 0,
+          static_cast<uint32_t>(query.size(0)),
+          static_cast<uint32_t>(query.size(2)),
+          static_cast<uint32_t>(key.size(2)), 0,
+          static_cast<uint32_t>(query.size(1)),
+          static_cast<uint32_t>(key.size(1)),
+          static_cast<float>(softmax_scale), stream);
+    } else {
+      launch_mixed_attention_sm120_q128_fp16<HeadDim, false, true, false>(
+          nullptr, nullptr, nullptr,
+          reinterpret_cast<half*>(query.data_ptr<at::Half>()),
+          reinterpret_cast<half*>(key.data_ptr<at::Half>()),
+          reinterpret_cast<half*>(value.data_ptr<at::Half>()), nullptr,
+          reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+          nullptr, nullptr, block_ids.data_ptr<int32_t>(),
+          block_counts.data_ptr<int32_t>(), nullptr, nullptr, nullptr,
+          valid_k_counts.data_ptr<int32_t>(), nullptr, 0,
+          static_cast<uint32_t>(query.size(0)),
+          static_cast<uint32_t>(query.size(2)),
+          static_cast<uint32_t>(key.size(2)), 0,
+          static_cast<uint32_t>(query.size(1)),
+          static_cast<uint32_t>(key.size(1)),
+          static_cast<float>(softmax_scale), stream);
+    }
+  };
+  if (query.size(3) == 64) {
+    launch(std::integral_constant<uint32_t, 64>{});
   } else {
-    launch_mixed_attention_sm120_q128_fp16<128, false, true, false>(
-        nullptr, nullptr, nullptr,
-        reinterpret_cast<half*>(query.data_ptr<at::Half>()),
-        reinterpret_cast<half*>(key.data_ptr<at::Half>()),
-        reinterpret_cast<half*>(value.data_ptr<at::Half>()), nullptr,
-        reinterpret_cast<half*>(output.data_ptr<at::Half>()),
-        nullptr, nullptr, block_ids.data_ptr<int32_t>(),
-        block_counts.data_ptr<int32_t>(), nullptr, nullptr, nullptr,
-        valid_k_counts.data_ptr<int32_t>(), nullptr, 0,
-        static_cast<uint32_t>(query.size(0)),
-        static_cast<uint32_t>(query.size(2)),
-        static_cast<uint32_t>(key.size(2)), 0,
-        static_cast<uint32_t>(query.size(1)),
-        static_cast<uint32_t>(key.size(1)),
-        static_cast<float>(softmax_scale), stream);
+    launch(std::integral_constant<uint32_t, 128>{});
   }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return {output, lse};
@@ -232,8 +241,8 @@ std::tuple<torch::Tensor, torch::Tensor> int8_attention_forward(
           k16.size(2) % 64 == 0,
       "K must share the batch and contain complete physical K64 slots");
   TORCH_CHECK(
-      q16.size(3) == 128 && k16.size(3) == 128,
-      "native INT8 K64 attention requires head_dim=128");
+      (q16.size(3) == 64 || q16.size(3) == 128) && k16.size(3) == q16.size(3),
+      "native INT8 K64 attention requires head_dim in {64,128}");
   TORCH_CHECK(
       q16.size(1) % k16.size(1) == 0,
       "query heads must be divisible by KV heads");
@@ -252,7 +261,7 @@ std::tuple<torch::Tensor, torch::Tensor> int8_attention_forward(
   TORCH_CHECK(k8.sizes() == k16.sizes(), "k8 must match k16 shape");
   TORCH_CHECK(
       v8.dim() == 4 && v8.size(0) == q16.size(0) &&
-          v8.size(1) == k16.size(1) && v8.size(2) == 128,
+          v8.size(1) == k16.size(1) && v8.size(2) == q16.size(3),
       "v8 must have shape [B,Hkv,D,padded_K]");
   const int64_t padded_kv_len = v8.size(3);
   TORCH_CHECK(
@@ -345,16 +354,24 @@ std::tuple<torch::Tensor, torch::Tensor> int8_attention_forward(
       static_cast<uint32_t>(k16.size(1)), \
       static_cast<float>(softmax_scale), stream)
 
-  if constexpr (QueryBlock == 64) {
-    auto launcher = active_fp16
-        ? launch_mixed_attention_sm120_q64_int8_fp16<128, true, true, false>
-        : launch_mixed_attention_sm120_q64_int8<128, true, false, false>;
-    MPA_LAUNCH_INT8(launcher);
+  const auto launch = [&](auto head_dim_tag) {
+    constexpr uint32_t HeadDim = decltype(head_dim_tag)::value;
+    if constexpr (QueryBlock == 64) {
+      auto launcher = active_fp16
+          ? launch_mixed_attention_sm120_q64_int8_fp16<HeadDim, true, true, false>
+          : launch_mixed_attention_sm120_q64_int8<HeadDim, true, false, false>;
+      MPA_LAUNCH_INT8(launcher);
+    } else {
+      auto launcher = active_fp16
+          ? launch_mixed_attention_sm120_q128_int8<HeadDim, true, true, false>
+          : launch_mixed_attention_sm120_q128_int8<HeadDim, true, false, false>;
+      MPA_LAUNCH_INT8(launcher);
+    }
+  };
+  if (q16.size(3) == 64) {
+    launch(std::integral_constant<uint32_t, 64>{});
   } else {
-    auto launcher = active_fp16
-        ? launch_mixed_attention_sm120_q128_int8<128, true, true, false>
-        : launch_mixed_attention_sm120_q128_int8<128, true, false, false>;
-    MPA_LAUNCH_INT8(launcher);
+    launch(std::integral_constant<uint32_t, 128>{});
   }
 #undef MPA_LAUNCH_INT8
 
@@ -424,13 +441,13 @@ torch::Tensor prefix_int8_attention_forward(
   TORCH_CHECK(
       q8.dim() == 4 && q8.size(0) > 0 && q8.size(1) > 0 &&
           q8.size(2) > 0 && q8.size(2) % QueryBlock == 0 &&
-          q8.size(3) == 128,
-      "q8 must have shape [B,Hq,Q,128] with Q divisible by query block");
+          (q8.size(3) == 64 || q8.size(3) == 128),
+      "q8 must have shape [B,Hq,Q,D] with Q divisible by query block");
   TORCH_CHECK(
       k8.dim() == 4 && k8.size(0) == q8.size(0) && k8.size(1) > 0 &&
-          k8.size(2) > 0 && k8.size(2) % 64 == 0 && k8.size(3) == 128 &&
+          k8.size(2) > 0 && k8.size(2) % 64 == 0 && k8.size(3) == q8.size(3) &&
           q8.size(1) % k8.size(1) == 0,
-      "k8 must have compatible [B,Hkv,K,128] K64 layout");
+      "k8 must have compatible [B,Hkv,K,D] K64 layout");
   TORCH_CHECK(
       prefix_tokens > 0 && prefix_tokens <= q8.size(2),
       "prefix_tokens must be in (0,Q]");
@@ -442,7 +459,7 @@ torch::Tensor prefix_int8_attention_forward(
   const int64_t key_blocks = k8.size(2) / 64;
   TORCH_CHECK(
       v8.dim() == 4 && v8.size(0) == q8.size(0) &&
-          v8.size(1) == k8.size(1) && v8.size(2) == 128 &&
+          v8.size(1) == k8.size(1) && v8.size(2) == q8.size(3) &&
           v8.size(3) >= ((k8.size(2) + 127) / 128) * 128 &&
           v8.size(3) % 128 == 0,
       "v8 must have verified [B,Hkv,128,padded_K] layout");
@@ -464,8 +481,8 @@ torch::Tensor prefix_int8_attention_forward(
       "k_scale must have shape [B,Hkv,K/64]");
   TORCH_CHECK(
       v_scale.sizes() == torch::IntArrayRef(
-          {q8.size(0), k8.size(1), 128}),
-      "v_scale must have shape [B,Hkv,128]");
+          {q8.size(0), k8.size(1), q8.size(3)}),
+      "v_scale must have shape [B,Hkv,D]");
   TORCH_CHECK(
       valid_k_counts.scalar_type() == at::ScalarType::Int &&
           valid_k_counts.sizes() ==
@@ -476,24 +493,32 @@ torch::Tensor prefix_int8_attention_forward(
       q8.sizes(), q8.options().dtype(at::ScalarType::Half));
   c10::cuda::CUDAGuard device_guard(q8.device());
   cudaStream_t stream = at::cuda::getCurrentCUDAStream(q8.get_device());
-  auto launcher = QueryBlock == 64
-      ? launch_mixed_attention_sm120_q64_int8_dense<128, true, false, false>
-      : launch_mixed_attention_sm120_q128_int8_dense<128, true, false, false>;
-  launcher(
-      q8.data_ptr<int8_t>(), k8.data_ptr<int8_t>(),
-      reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr()),
-      nullptr, nullptr, nullptr, nullptr,
-      reinterpret_cast<half*>(output.data_ptr<at::Half>()),
-      nullptr, nullptr, nullptr, nullptr,
-      q_scale.data_ptr<float>(), k_scale.data_ptr<float>(),
-      v_scale.data_ptr<float>(), valid_k_counts.data_ptr<int32_t>(),
-      nullptr, 0, static_cast<uint32_t>(q8.size(0)),
-      static_cast<uint32_t>(q8.size(2)),
-      static_cast<uint32_t>(k8.size(2)),
-      static_cast<uint32_t>(v8.size(3)),
-      static_cast<uint32_t>(q8.size(1)),
-      static_cast<uint32_t>(k8.size(1)),
-      static_cast<float>(softmax_scale), stream);
+  const auto launch = [&](auto head_dim_tag) {
+    constexpr uint32_t HeadDim = decltype(head_dim_tag)::value;
+    auto launcher = QueryBlock == 64
+        ? launch_mixed_attention_sm120_q64_int8_dense<HeadDim, true, false, false>
+        : launch_mixed_attention_sm120_q128_int8_dense<HeadDim, true, false, false>;
+    launcher(
+        q8.data_ptr<int8_t>(), k8.data_ptr<int8_t>(),
+        reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr()),
+        nullptr, nullptr, nullptr, nullptr,
+        reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+        nullptr, nullptr, nullptr, nullptr,
+        q_scale.data_ptr<float>(), k_scale.data_ptr<float>(),
+        v_scale.data_ptr<float>(), valid_k_counts.data_ptr<int32_t>(),
+        nullptr, 0, static_cast<uint32_t>(q8.size(0)),
+        static_cast<uint32_t>(q8.size(2)),
+        static_cast<uint32_t>(k8.size(2)),
+        static_cast<uint32_t>(v8.size(3)),
+        static_cast<uint32_t>(q8.size(1)),
+        static_cast<uint32_t>(k8.size(1)),
+        static_cast<float>(softmax_scale), stream);
+  };
+  if (q8.size(3) == 64) {
+    launch(std::integral_constant<uint32_t, 64>{});
+  } else {
+    launch(std::integral_constant<uint32_t, 128>{});
+  }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return output.narrow(2, 0, prefix_tokens);
 }
@@ -578,9 +603,9 @@ std::tuple<torch::Tensor, torch::Tensor> mxfp8_attention_forward(
           k_fp16.size(2) % 64 == 0,
       "MXFP8 K length must be a positive multiple of 64 with matching batch");
   TORCH_CHECK(
-      q_fp16.size(3) == 128 && k_fp16.size(3) == 128 &&
+      (q_fp16.size(3) == 64 || q_fp16.size(3) == 128) && k_fp16.size(3) == q_fp16.size(3) &&
           q_fp16.size(1) % k_fp16.size(1) == 0,
-      "SM120 MXFP8 requires D128 and divisible Q/KV heads");
+      "SM120 MXFP8 requires D64/D128 and divisible Q/KV heads");
   TORCH_CHECK(
       std::isfinite(softmax_scale) && softmax_scale > 0.0,
       "softmax_scale must be finite and positive");
@@ -603,16 +628,16 @@ std::tuple<torch::Tensor, torch::Tensor> mxfp8_attention_forward(
   TORCH_CHECK(k_mxfp8.sizes() == k_fp16.sizes(), "k_mxfp8 must match k_fp16");
   TORCH_CHECK(
       q_mxfp8_scale.sizes() == torch::IntArrayRef(
-          {q_fp16.size(0), q_fp16.size(1), q_fp16.size(2), 4}),
-      "q_mxfp8_scale must have shape [B,Hq,Q,4]");
+          {q_fp16.size(0), q_fp16.size(1), q_fp16.size(2), q_fp16.size(3) / 32}),
+      "q_mxfp8_scale must have shape [B,Hq,Q,D/32]");
   TORCH_CHECK(
       k_mxfp8_scale.sizes() == torch::IntArrayRef(
-          {k_fp16.size(0), k_fp16.size(1), k_fp16.size(2), 4}),
-      "k_mxfp8_scale must have shape [B,Hkv,K,4]");
+          {k_fp16.size(0), k_fp16.size(1), k_fp16.size(2), q_fp16.size(3) / 32}),
+      "k_mxfp8_scale must have shape [B,Hkv,K,D/32]");
   TORCH_CHECK(
       v_mxfp8.dim() == 4 && v_mxfp8.size(0) == k_fp16.size(0) &&
           v_mxfp8.size(1) == k_fp16.size(1) &&
-          v_mxfp8.size(2) == 128 &&
+          v_mxfp8.size(2) == q_fp16.size(3) &&
           v_mxfp8.size(3) >= k_fp16.size(2) &&
           v_mxfp8.size(3) % 64 == 0,
       "v_mxfp8 must have shape [B,Hkv,128,padded_K]");
@@ -620,8 +645,8 @@ std::tuple<torch::Tensor, torch::Tensor> mxfp8_attention_forward(
   const int64_t key_blocks = k_fp16.size(2) / 64;
   TORCH_CHECK(
       v_mxfp8_scale.sizes() == torch::IntArrayRef(
-          {k_fp16.size(0), k_fp16.size(1), key_blocks, 256}),
-      "v_mxfp8_scale must have K64 consumer shape [B,Hkv,K/64,256]");
+          {k_fp16.size(0), k_fp16.size(1), key_blocks, q_fp16.size(3) * 2}),
+      "v_mxfp8_scale must have K64 consumer shape [B,Hkv,K/64,2*D]");
 
   TORCH_CHECK(block_ids.scalar_type() == at::ScalarType::Int,
               "block_ids must be int32");
@@ -663,37 +688,67 @@ std::tuple<torch::Tensor, torch::Tensor> mxfp8_attention_forward(
   c10::cuda::CUDAGuard device_guard(q_fp16.device());
   cudaStream_t stream = at::cuda::getCurrentCUDAStream(q_fp16.get_device());
 
-  if constexpr (CompactSequential) {
-    static_assert(QueryBlock == 128);
-    TORCH_CHECK(!active_fp16, "compact MXFP8 is a pure compute ceiling");
-    launch_mixed_attention_sm120_q128_mxfp8_compact<
-        128, true, false, false>(
-        reinterpret_cast<int8_t*>(q_mxfp8.data_ptr<uint8_t>()),
-        reinterpret_cast<int8_t*>(k_mxfp8.data_ptr<uint8_t>()),
-        reinterpret_cast<__nv_fp8_e4m3*>(v_mxfp8.data_ptr<uint8_t>()),
-        reinterpret_cast<half*>(q_fp16.data_ptr<at::Half>()),
-        reinterpret_cast<half*>(k_fp16.data_ptr<at::Half>()),
-        reinterpret_cast<half*>(v_fp16.data_ptr<at::Half>()), nullptr,
-        reinterpret_cast<half*>(output.data_ptr<at::Half>()),
-        block_ids.data_ptr<int32_t>(),
-        mxfp8_block_counts.data_ptr<int32_t>(),
-        block_ids.data_ptr<int32_t>(), fp16_block_counts.data_ptr<int32_t>(),
-        q_mxfp8_scale.data_ptr<uint8_t>(),
-        k_mxfp8_scale.data_ptr<uint8_t>(),
-        v_mxfp8_scale.data_ptr<uint8_t>(),
-        valid_k_counts.data_ptr<int32_t>(), nullptr, 0,
-        static_cast<uint32_t>(q_fp16.size(0)),
-        static_cast<uint32_t>(q_fp16.size(2)),
-        static_cast<uint32_t>(k_fp16.size(2)),
-        static_cast<uint32_t>(v_mxfp8.size(3)),
-        static_cast<uint32_t>(q_fp16.size(1)),
-        static_cast<uint32_t>(k_fp16.size(1)),
-        static_cast<float>(softmax_scale), stream);
-  } else if constexpr (QueryBlock == 64) {
-    auto launcher = active_fp16
-        ? launch_mixed_attention_sm120_q64<128, true, true, false>
-        : launch_mixed_attention_sm120_q64<128, true, false, false>;
-    launcher(
+  const auto launch = [&](auto head_dim_tag) {
+    constexpr uint32_t HeadDim = decltype(head_dim_tag)::value;
+    if constexpr (CompactSequential) {
+      static_assert(QueryBlock == 128);
+      TORCH_CHECK(!active_fp16, "compact MXFP8 is a pure compute ceiling");
+      launch_mixed_attention_sm120_q128_mxfp8_compact<
+          HeadDim, true, false, false>(
+          reinterpret_cast<int8_t*>(q_mxfp8.data_ptr<uint8_t>()),
+          reinterpret_cast<int8_t*>(k_mxfp8.data_ptr<uint8_t>()),
+          reinterpret_cast<__nv_fp8_e4m3*>(v_mxfp8.data_ptr<uint8_t>()),
+          reinterpret_cast<half*>(q_fp16.data_ptr<at::Half>()),
+          reinterpret_cast<half*>(k_fp16.data_ptr<at::Half>()),
+          reinterpret_cast<half*>(v_fp16.data_ptr<at::Half>()), nullptr,
+          reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+          block_ids.data_ptr<int32_t>(),
+          mxfp8_block_counts.data_ptr<int32_t>(),
+          block_ids.data_ptr<int32_t>(), fp16_block_counts.data_ptr<int32_t>(),
+          q_mxfp8_scale.data_ptr<uint8_t>(),
+          k_mxfp8_scale.data_ptr<uint8_t>(),
+          v_mxfp8_scale.data_ptr<uint8_t>(),
+          valid_k_counts.data_ptr<int32_t>(), nullptr, 0,
+          static_cast<uint32_t>(q_fp16.size(0)),
+          static_cast<uint32_t>(q_fp16.size(2)),
+          static_cast<uint32_t>(k_fp16.size(2)),
+          static_cast<uint32_t>(v_mxfp8.size(3)),
+          static_cast<uint32_t>(q_fp16.size(1)),
+          static_cast<uint32_t>(k_fp16.size(1)),
+          static_cast<float>(softmax_scale), stream);
+    } else if constexpr (QueryBlock == 64) {
+      auto launcher = active_fp16
+          ? launch_mixed_attention_sm120_q64<HeadDim, true, true, false>
+          : launch_mixed_attention_sm120_q64<HeadDim, true, false, false>;
+      launcher(
+          reinterpret_cast<int8_t*>(q_mxfp8.data_ptr<uint8_t>()),
+          reinterpret_cast<int8_t*>(k_mxfp8.data_ptr<uint8_t>()),
+          reinterpret_cast<__nv_fp8_e4m3*>(v_mxfp8.data_ptr<uint8_t>()),
+          reinterpret_cast<half*>(q_fp16.data_ptr<at::Half>()),
+          reinterpret_cast<half*>(k_fp16.data_ptr<at::Half>()),
+          reinterpret_cast<half*>(v_fp16.data_ptr<at::Half>()), nullptr,
+          reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+          block_ids.data_ptr<int32_t>(),
+          mxfp8_block_counts.data_ptr<int32_t>(),
+          block_ids.data_ptr<int32_t>(),
+          fp16_block_counts.data_ptr<int32_t>(),
+          q_mxfp8_scale.data_ptr<uint8_t>(),
+          k_mxfp8_scale.data_ptr<uint8_t>(),
+          v_mxfp8_scale.data_ptr<uint8_t>(),
+          valid_k_counts.data_ptr<int32_t>(), nullptr,
+          static_cast<uint32_t>(fp16_prefix_blocks),
+          static_cast<uint32_t>(q_fp16.size(0)),
+          static_cast<uint32_t>(q_fp16.size(2)),
+          static_cast<uint32_t>(k_fp16.size(2)),
+          static_cast<uint32_t>(v_mxfp8.size(3)),
+          static_cast<uint32_t>(q_fp16.size(1)),
+          static_cast<uint32_t>(k_fp16.size(1)),
+          static_cast<float>(softmax_scale), stream);
+    } else {
+      auto launcher = active_fp16
+          ? launch_mixed_attention_sm120_q128_mxfp8<HeadDim, true, true, false>
+          : launch_mixed_attention_sm120_q128_mxfp8<HeadDim, true, false, false>;
+      launcher(
         reinterpret_cast<int8_t*>(q_mxfp8.data_ptr<uint8_t>()),
         reinterpret_cast<int8_t*>(k_mxfp8.data_ptr<uint8_t>()),
         reinterpret_cast<__nv_fp8_e4m3*>(v_mxfp8.data_ptr<uint8_t>()),
@@ -717,34 +772,12 @@ std::tuple<torch::Tensor, torch::Tensor> mxfp8_attention_forward(
         static_cast<uint32_t>(q_fp16.size(1)),
         static_cast<uint32_t>(k_fp16.size(1)),
         static_cast<float>(softmax_scale), stream);
+    }
+  };
+  if (q_fp16.size(3) == 64) {
+    launch(std::integral_constant<uint32_t, 64>{});
   } else {
-    auto launcher = active_fp16
-        ? launch_mixed_attention_sm120_q128_mxfp8<128, true, true, false>
-        : launch_mixed_attention_sm120_q128_mxfp8<128, true, false, false>;
-    launcher(
-      reinterpret_cast<int8_t*>(q_mxfp8.data_ptr<uint8_t>()),
-      reinterpret_cast<int8_t*>(k_mxfp8.data_ptr<uint8_t>()),
-      reinterpret_cast<__nv_fp8_e4m3*>(v_mxfp8.data_ptr<uint8_t>()),
-      reinterpret_cast<half*>(q_fp16.data_ptr<at::Half>()),
-      reinterpret_cast<half*>(k_fp16.data_ptr<at::Half>()),
-      reinterpret_cast<half*>(v_fp16.data_ptr<at::Half>()), nullptr,
-      reinterpret_cast<half*>(output.data_ptr<at::Half>()),
-      block_ids.data_ptr<int32_t>(),
-      mxfp8_block_counts.data_ptr<int32_t>(),
-      block_ids.data_ptr<int32_t>(),
-      fp16_block_counts.data_ptr<int32_t>(),
-      q_mxfp8_scale.data_ptr<uint8_t>(),
-      k_mxfp8_scale.data_ptr<uint8_t>(),
-      v_mxfp8_scale.data_ptr<uint8_t>(),
-      valid_k_counts.data_ptr<int32_t>(), nullptr,
-      static_cast<uint32_t>(fp16_prefix_blocks),
-      static_cast<uint32_t>(q_fp16.size(0)),
-      static_cast<uint32_t>(q_fp16.size(2)),
-      static_cast<uint32_t>(k_fp16.size(2)),
-      static_cast<uint32_t>(v_mxfp8.size(3)),
-      static_cast<uint32_t>(q_fp16.size(1)),
-      static_cast<uint32_t>(k_fp16.size(1)),
-      static_cast<float>(softmax_scale), stream);
+    launch(std::integral_constant<uint32_t, 128>{});
   }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return {output, lse};
@@ -834,15 +867,15 @@ std::tuple<torch::Tensor, torch::Tensor> nvfp4_attention_forward(
           v_fp16.scalar_type() == at::ScalarType::Half,
       "FP16 operands must be FP16");
   TORCH_CHECK(
-      q_fp16.dim() == 4 && q_fp16.size(3) == 128 &&
+      q_fp16.dim() == 4 && (q_fp16.size(3) == 64 || q_fp16.size(3) == 128) &&
           q_fp16.size(2) > 0 && q_fp16.size(2) % QueryBlock == 0,
-      "Q must have shape [B,Hq,Q,128] with Q divisible by query block");
+      "Q must have shape [B,Hq,Q,D] with Q divisible by query block");
   TORCH_CHECK(
       k_fp16.dim() == 4 && k_fp16.sizes() == v_fp16.sizes() &&
           k_fp16.size(0) == q_fp16.size(0) &&
           k_fp16.size(2) > 0 && k_fp16.size(2) % 64 == 0 &&
-          k_fp16.size(3) == 128 && q_fp16.size(1) % k_fp16.size(1) == 0,
-      "K/V must have matching [B,Hkv,K,128] shapes with K divisible by 64");
+          k_fp16.size(3) == q_fp16.size(3) && q_fp16.size(1) % k_fp16.size(1) == 0,
+      "K/V must have matching [B,Hkv,K,D] shapes with K divisible by 64");
   for (const auto& item : {
            std::pair<const torch::Tensor*, const char*>(&q_nvfp4, "q_nvfp4"),
            std::pair<const torch::Tensor*, const char*>(&q_nvfp4_scale, "q_nvfp4_scale"),
@@ -855,23 +888,23 @@ std::tuple<torch::Tensor, torch::Tensor> nvfp4_attention_forward(
   }
   TORCH_CHECK(
       q_nvfp4.sizes() == torch::IntArrayRef(
-          {q_fp16.size(0), q_fp16.size(1), q_fp16.size(2), 64}) &&
+          {q_fp16.size(0), q_fp16.size(1), q_fp16.size(2), q_fp16.size(3) / 2}) &&
           q_nvfp4_scale.sizes() == torch::IntArrayRef(
-              {q_fp16.size(0), q_fp16.size(1), q_fp16.size(2), 8}),
+              {q_fp16.size(0), q_fp16.size(1), q_fp16.size(2), q_fp16.size(3) / 16}),
       "invalid NVFP4 Q shapes");
   TORCH_CHECK(
       k_nvfp4.sizes() == torch::IntArrayRef(
-          {k_fp16.size(0), k_fp16.size(1), k_fp16.size(2), 64}) &&
+          {k_fp16.size(0), k_fp16.size(1), k_fp16.size(2), q_fp16.size(3) / 2}) &&
           k_nvfp4_scale.sizes() == torch::IntArrayRef(
-              {k_fp16.size(0), k_fp16.size(1), k_fp16.size(2), 8}),
+              {k_fp16.size(0), k_fp16.size(1), k_fp16.size(2), q_fp16.size(3) / 16}),
       "invalid NVFP4 K shapes");
   const int64_t query_blocks = q_fp16.size(2) / QueryBlock;
   const int64_t key_blocks = k_fp16.size(2) / 64;
   TORCH_CHECK(
       v_nvfp4.sizes() == torch::IntArrayRef(
-          {v_fp16.size(0), v_fp16.size(1), 128, v_fp16.size(2) / 2}) &&
+          {v_fp16.size(0), v_fp16.size(1), q_fp16.size(3), v_fp16.size(2) / 2}) &&
           v_nvfp4_scale.sizes() == torch::IntArrayRef(
-              {v_fp16.size(0), v_fp16.size(1), key_blocks, 512}),
+              {v_fp16.size(0), v_fp16.size(1), key_blocks, q_fp16.size(3) * 4}),
       "invalid NVFP4 V consumer shapes");
   TORCH_CHECK(
       block_ids.scalar_type() == at::ScalarType::Int &&
@@ -940,16 +973,24 @@ std::tuple<torch::Tensor, torch::Tensor> nvfp4_attention_forward(
       static_cast<uint32_t>(k_fp16.size(1)),
       static_cast<float>(softmax_scale), stream);
   };
-  if constexpr (QueryBlock == 64) {
-    auto launcher = active_fp16
-        ? launch_mixed_attention_sm120_q64_nvfp4<128, true, true, false>
-        : launch_mixed_attention_sm120_q64_nvfp4<128, true, false, false>;
-    launch_nvfp4(launcher);
+  const auto launch = [&](auto head_dim_tag) {
+    constexpr uint32_t HeadDim = decltype(head_dim_tag)::value;
+    if constexpr (QueryBlock == 64) {
+      auto launcher = active_fp16
+          ? launch_mixed_attention_sm120_q64_nvfp4<HeadDim, true, true, false>
+          : launch_mixed_attention_sm120_q64_nvfp4<HeadDim, true, false, false>;
+      launch_nvfp4(launcher);
+    } else {
+      auto launcher = active_fp16
+          ? launch_mixed_attention_sm120_q128_nvfp4<HeadDim, true, true, false>
+          : launch_mixed_attention_sm120_q128_nvfp4<HeadDim, true, false, false>;
+      launch_nvfp4(launcher);
+    }
+  };
+  if (q_fp16.size(3) == 64) {
+    launch(std::integral_constant<uint32_t, 64>{});
   } else {
-    auto launcher = active_fp16
-        ? launch_mixed_attention_sm120_q128_nvfp4<128, true, true, false>
-        : launch_mixed_attention_sm120_q128_nvfp4<128, true, false, false>;
-    launch_nvfp4(launcher);
+    launch(std::integral_constant<uint32_t, 128>{});
   }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return {output, lse};
@@ -1018,9 +1059,9 @@ std::tuple<torch::Tensor, torch::Tensor> three_phase_forward(
           q16.dim() == 4 && k16.dim() == 4 && k16.sizes() == v16.sizes() &&
           q16.size(0) == k16.size(0) && q16.size(2) > 0 &&
           q16.size(2) % QueryBlock == 0 && k16.size(2) > 0 &&
-          k16.size(2) % 64 == 0 && q16.size(3) == 128 &&
-          k16.size(3) == 128 && q16.size(1) % k16.size(1) == 0,
-      "FP16 operands must be compatible [B,H,Q/K,128] tensors");
+          k16.size(2) % 64 == 0 && (q16.size(3) == 64 || q16.size(3) == 128) &&
+          k16.size(3) == q16.size(3) && q16.size(1) % k16.size(1) == 0,
+      "FP16 operands must be compatible [B,H,Q/K,D] tensors");
   const int64_t query_blocks = q16.size(2) / QueryBlock;
   const int64_t key_blocks = k16.size(2) / 64;
   const std::array<int64_t, 3> count_dims = {
@@ -1050,17 +1091,17 @@ std::tuple<torch::Tensor, torch::Tensor> three_phase_forward(
           k4_scale.scalar_type() == at::ScalarType::Byte &&
           v4_scale.scalar_type() == at::ScalarType::Byte &&
           q4.sizes() == torch::IntArrayRef(
-              {q16.size(0), q16.size(1), q16.size(2), 64}) &&
+              {q16.size(0), q16.size(1), q16.size(2), q16.size(3) / 2}) &&
           q4_scale.sizes() == torch::IntArrayRef(
-              {q16.size(0), q16.size(1), q16.size(2), 8}) &&
+              {q16.size(0), q16.size(1), q16.size(2), q16.size(3) / 16}) &&
           k4.sizes() == torch::IntArrayRef(
-              {k16.size(0), k16.size(1), k16.size(2), 64}) &&
+              {k16.size(0), k16.size(1), k16.size(2), q16.size(3) / 2}) &&
           k4_scale.sizes() == torch::IntArrayRef(
-              {k16.size(0), k16.size(1), k16.size(2), 8}) &&
+              {k16.size(0), k16.size(1), k16.size(2), q16.size(3) / 16}) &&
           v4.sizes() == torch::IntArrayRef(
-              {v16.size(0), v16.size(1), 128, v16.size(2) / 2}) &&
+              {v16.size(0), v16.size(1), q16.size(3), v16.size(2) / 2}) &&
           v4_scale.sizes() == torch::IntArrayRef(
-              {v16.size(0), v16.size(1), key_blocks, 512}),
+              {v16.size(0), v16.size(1), key_blocks, q16.size(3) * 4}),
       "invalid NVFP4 operand shapes or dtypes");
   for (const auto* scale : {&q_global_scale, &k_global_scale, &v_global_scale}) {
     TORCH_CHECK(
@@ -1080,7 +1121,7 @@ std::tuple<torch::Tensor, torch::Tensor> three_phase_forward(
                 {q16.size(0), k16.size(1), key_blocks}) &&
             v8_scale.scalar_type() == at::ScalarType::Float &&
             v8_scale.sizes() == torch::IntArrayRef(
-                {q16.size(0), k16.size(1), 128}),
+                {q16.size(0), k16.size(1), q16.size(3)}),
         "invalid INT8/E4M3 middle-phase operands");
   } else {
     TORCH_CHECK(
@@ -1090,18 +1131,18 @@ std::tuple<torch::Tensor, torch::Tensor> three_phase_forward(
             q8.sizes() == q16.sizes() && k8.sizes() == k16.sizes() &&
             q8_scale.scalar_type() == at::ScalarType::Byte &&
             q8_scale.sizes() == torch::IntArrayRef(
-                {q16.size(0), q16.size(1), q16.size(2), 4}) &&
+                {q16.size(0), q16.size(1), q16.size(2), q16.size(3) / 32}) &&
             k8_scale.scalar_type() == at::ScalarType::Byte &&
             k8_scale.sizes() == torch::IntArrayRef(
-                {k16.size(0), k16.size(1), k16.size(2), 4}) &&
+                {k16.size(0), k16.size(1), k16.size(2), q16.size(3) / 32}) &&
             v8_scale.scalar_type() == at::ScalarType::Byte &&
             v8_scale.sizes() == torch::IntArrayRef(
-                {k16.size(0), k16.size(1), key_blocks, 256}),
+                {k16.size(0), k16.size(1), key_blocks, q16.size(3) * 2}),
         "invalid MXFP8 middle-phase operands");
   }
   TORCH_CHECK(
       v8.dim() == 4 && v8.size(0) == q16.size(0) &&
-          v8.size(1) == k16.size(1) && v8.size(2) == 128 &&
+          v8.size(1) == k16.size(1) && v8.size(2) == q16.size(3) &&
           v8.size(3) >= k16.size(2) && v8.size(3) % 64 == 0,
       "middle V must have shape [B,Hkv,128,padded_K]");
   TORCH_CHECK(
@@ -1137,47 +1178,55 @@ std::tuple<torch::Tensor, torch::Tensor> three_phase_forward(
       static_cast<uint32_t>(k16.size(2)), static_cast<uint32_t>(v8.size(3)), \
       static_cast<uint32_t>(q16.size(1)), static_cast<uint32_t>(k16.size(1)), \
       static_cast<float>(softmax_scale), stream
-  if constexpr (MiddleInt8) {
-    auto launch_int8 = [&](auto launcher) {
-      launcher(
-          q8.data_ptr<int8_t>(), k8.data_ptr<int8_t>(),
-          reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr()),
-          MPA_STACK_COMMON_ARGS,
-          q8_scale.data_ptr<float>(), k8_scale.data_ptr<float>(),
-          v8_scale.data_ptr<float>(), MPA_STACK_NV_ARGS);
-    };
-    if constexpr (QueryBlock == 64) {
-      auto launcher = active_fp16
-          ? launch_mixed_attention_sm120_q64_nv_int8_fp16<128, true, true, false>
-          : launch_mixed_attention_sm120_q64_nv_int8_fp16<128, true, false, false>;
-      launch_int8(launcher);
+  const auto launch = [&](auto head_dim_tag) {
+    constexpr uint32_t HeadDim = decltype(head_dim_tag)::value;
+    if constexpr (MiddleInt8) {
+      auto launch_int8 = [&](auto launcher) {
+        launcher(
+            q8.data_ptr<int8_t>(), k8.data_ptr<int8_t>(),
+            reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr()),
+            MPA_STACK_COMMON_ARGS,
+            q8_scale.data_ptr<float>(), k8_scale.data_ptr<float>(),
+            v8_scale.data_ptr<float>(), MPA_STACK_NV_ARGS);
+      };
+      if constexpr (QueryBlock == 64) {
+        auto launcher = active_fp16
+            ? launch_mixed_attention_sm120_q64_nv_int8_fp16<HeadDim, true, true, false>
+            : launch_mixed_attention_sm120_q64_nv_int8_fp16<HeadDim, true, false, false>;
+        launch_int8(launcher);
+      } else {
+        auto launcher = active_fp16
+            ? launch_mixed_attention_sm120_q128_nv_int8_fp16<HeadDim, true, true, false>
+            : launch_mixed_attention_sm120_q128_nv_int8_fp16<HeadDim, true, false, false>;
+        launch_int8(launcher);
+      }
     } else {
-      auto launcher = active_fp16
-          ? launch_mixed_attention_sm120_q128_nv_int8_fp16<128, true, true, false>
-          : launch_mixed_attention_sm120_q128_nv_int8_fp16<128, true, false, false>;
-      launch_int8(launcher);
+      auto launch_mx = [&](auto launcher) {
+        launcher(
+            reinterpret_cast<int8_t*>(q8.data_ptr<uint8_t>()),
+            reinterpret_cast<int8_t*>(k8.data_ptr<uint8_t>()),
+            reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr<uint8_t>()),
+            MPA_STACK_COMMON_ARGS,
+            q8_scale.data_ptr<uint8_t>(), k8_scale.data_ptr<uint8_t>(),
+            v8_scale.data_ptr<uint8_t>(), MPA_STACK_NV_ARGS);
+      };
+      if constexpr (QueryBlock == 64) {
+        auto launcher = active_fp16
+            ? launch_mixed_attention_sm120_q64_nv_mx_fp16<HeadDim, true, true, false>
+            : launch_mixed_attention_sm120_q64_nv_mx_fp16<HeadDim, true, false, false>;
+        launch_mx(launcher);
+      } else {
+        auto launcher = active_fp16
+            ? launch_mixed_attention_sm120_q128_nv_mx_fp16<HeadDim, true, true, false>
+            : launch_mixed_attention_sm120_q128_nv_mx_fp16<HeadDim, true, false, false>;
+        launch_mx(launcher);
+      }
     }
+  };
+  if (q16.size(3) == 64) {
+    launch(std::integral_constant<uint32_t, 64>{});
   } else {
-    auto launch_mx = [&](auto launcher) {
-      launcher(
-          reinterpret_cast<int8_t*>(q8.data_ptr<uint8_t>()),
-          reinterpret_cast<int8_t*>(k8.data_ptr<uint8_t>()),
-          reinterpret_cast<__nv_fp8_e4m3*>(v8.data_ptr<uint8_t>()),
-          MPA_STACK_COMMON_ARGS,
-          q8_scale.data_ptr<uint8_t>(), k8_scale.data_ptr<uint8_t>(),
-          v8_scale.data_ptr<uint8_t>(), MPA_STACK_NV_ARGS);
-    };
-    if constexpr (QueryBlock == 64) {
-      auto launcher = active_fp16
-          ? launch_mixed_attention_sm120_q64_nv_mx_fp16<128, true, true, false>
-          : launch_mixed_attention_sm120_q64_nv_mx_fp16<128, true, false, false>;
-      launch_mx(launcher);
-    } else {
-      auto launcher = active_fp16
-          ? launch_mixed_attention_sm120_q128_nv_mx_fp16<128, true, true, false>
-          : launch_mixed_attention_sm120_q128_nv_mx_fp16<128, true, false, false>;
-      launch_mx(launcher);
-    }
+    launch(std::integral_constant<uint32_t, 128>{});
   }
 #undef MPA_STACK_NV_ARGS
 #undef MPA_STACK_COMMON_ARGS

@@ -38,7 +38,8 @@ output = anemoi_attention(
 | SM120 / RTX 5090 | Q64 | every non-empty combination of NVFP4, INT8, and FP16 | visual-only; packed prefix + video |
 | SM120 / RTX 5090 | Q128 | every non-empty combination of NVFP4, INT8, and FP16 | visual-only; packed prefix + video |
 
-On SM120, Q128 includes every stable Q64 precision cell. Generic NVFP4 uses
+Both architectures support head dimensions 64 and 128. On SM120, Q128
+includes every stable Q64 precision cell. Generic NVFP4 uses
 unity Q/K/V global scales by default and accepts an optional
 `NVFP4Calibration`; the MiniMax-H3 adapter supplies its own calibrated
 per-layer scales. The [Attention API guide](docs/attention_api.md) gives the

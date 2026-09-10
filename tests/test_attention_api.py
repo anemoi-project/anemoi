@@ -40,7 +40,7 @@ class AttentionAPITests(unittest.TestCase):
         for module in (
             "anemoi.layers.attention.draft_attention",
             "anemoi.layers.attention.sparse_attention",
-            "anemoi.layers.attention.triton.block_sparse_attention",
+            "anemoi.layers.attention.triton",
         ):
             self.assertIsNone(find_spec(module), module)
 
