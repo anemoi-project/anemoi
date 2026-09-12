@@ -1,6 +1,8 @@
 # Anemoi Project
 
-Anemoi is an inference-only, training-free framework for high-performance visual generation, with a special focus on video generation.
+[Project Homepage](anemoi-project.github.io)
+
+Anemoi is a high-performance visual generation, with a special focus on video generation.
 Unlike existing approaches that operate primarily on flattened 1D token sequences for attention design, Anemoi reasons over spatially structured 2D visual regions ([Draft Attention](https://arxiv.org/pdf/2505.14708)) to identify redundancy and adaptively route attention computation.
 
 Currently, Anemoi supports adaptive compact ragged 2-D routing and native
@@ -184,25 +186,17 @@ follows:
 
 ![Minimalist product advertisement difference highlights](asserts/visualization/difference-highlights/01_极简产品广告.png)
 
-[Full-resolution MP4](asserts/visualization/videos/01_极简产品广告_compare6.mp4)
-
 **3D Animated Short**
 
 ![3D animated short difference highlights](asserts/visualization/difference-highlights/03_3D动画短片.png)
-
-[Full-resolution MP4](asserts/visualization/videos/03_3D动画短片_compare6.mp4)
 
 **Nature Documentary**
 
 ![Nature documentary difference highlights](asserts/visualization/difference-highlights/05_自然纪录片.png)
 
-[Full-resolution MP4](asserts/visualization/videos/05_自然纪录片_compare6.mp4)
-
 **Macro Insect**
 
 ![Macro insect difference highlights](asserts/visualization/difference-highlights/09_微距昆虫.png)
-
-[Full-resolution MP4](asserts/visualization/videos/09_微距昆虫_compare6.mp4)
 
 **Eagle in Flight**
 
@@ -214,21 +208,13 @@ follows:
 
 ![Tea ceremony difference highlights](asserts/visualization/difference-highlights/18_茶道.png)
 
-[Full-resolution MP4](asserts/visualization/videos/18_茶道_compare6.mp4)
-
 **City Time-Lapse**
 
 ![City time-lapse difference highlights](asserts/visualization/difference-highlights/30_城市延时.png)
 
-[Full-resolution MP4](asserts/visualization/videos/30_城市延时_compare6.mp4)
-
 **Pottery Wheel**
 
 ![Pottery wheel difference highlights](asserts/visualization/difference-highlights/37_陶轮.png)
-
-[Full-resolution MP4](asserts/visualization/videos/37_陶轮_compare6.mp4)
-
-More videos are available in [`asserts/visualization/videos/`](asserts/visualization/videos/).
 
 ## Repository Layout
 
